@@ -1,0 +1,18 @@
+# Project Rules
+
+## Comments
+- Do not add comments everywhere in the code.
+- Each file should have at most one short, brief comment summarizing what it does.
+- Each service should have one comment describing what the whole service does.
+- Comments must be written in plain, simple language — no buzzwords or jargon.
+- Any new developer should be able to read the comment and immediately understand the purpose, without needing extra context.
+
+## Folder Structure
+- Follow proper, consistent folder structure across the project.
+- Group related files together (e.g. by feature or domain), don't scatter related logic across unrelated folders.
+
+## Constants & Types
+- All constants must be defined in a dedicated `constants` file only.
+- All types/interfaces must be defined in a dedicated `types` file only.
+- Do not define constants or types inline inside other files.
+- Always export constants and types from their respective files and import them where needed.

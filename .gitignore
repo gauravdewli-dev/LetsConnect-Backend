@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.env
+.env.local
+.DS_Store
+
+# Local databases
+app.db
+*.db
+
+# Gmail OAuth secrets
+credentials.json
+token.json
+gmail_mcp/secrets/
+
+# Editor / IDE
+.cursor/
+.idea/
+.vscode/
