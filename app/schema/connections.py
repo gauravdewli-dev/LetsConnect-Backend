@@ -32,6 +32,7 @@ class SlackConnection(Base):
     slack_team_id = Column(String, nullable=False)
     slack_user_id = Column(String, unique=True, index=True, nullable=False)
     bot_token_enc = Column(String, nullable=False)
+    user_token_enc = Column(String, nullable=True)
     created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     user = relationship("User", backref="slack_connection")

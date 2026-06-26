@@ -45,6 +45,9 @@ class ConnectionStatusResponse(BaseModel):
     gmail_email: str | None = None
     slack_connected: bool
     slack_configured: bool = False
+    slack_send_as_user: bool = False
+    slack_team_id: str | None = None
+    slack_open_url: str | None = None
 
 
 class ChatMessage(BaseModel):

@@ -4,13 +4,13 @@ import logging
 import secrets
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.configs.database.db import get_db
-from app.constants import SLACK_BOT_SCOPES
+from app.constants import SLACK_BOT_SCOPES, SLACK_USER_SCOPES
 from app.schema.users import User
 from app.security import (
     create_oauth_state_token,
@@ -19,6 +19,7 @@ from app.security import (
     get_user_from_query_token,
 )
 from app.service.gmail_agent import run_agent
+from app.service.slack_onboarding import onboard_slack_user
 from app.service.gmail_tokens import (
     create_gmail_flow,
     delete_slack_connection,
@@ -27,6 +28,7 @@ from app.service.gmail_tokens import (
     get_slack_connection_by_user,
     save_gmail_connection,
     save_slack_connection,
+    slack_has_user_token,
 )
 from app.types import ChatRequest, ChatResponse, ConnectionStatusResponse, MessageResponse
 
@@ -39,11 +41,21 @@ def connection_status(user: User = Depends(get_current_user), db: Session = Depe
     settings = get_settings()
     gmail = get_gmail_connection(db, user.id)
     slack = get_slack_connection_by_user(db, user.id)
+    slack_open_url: str | None = None
+    if slack and settings.slack_app_id:
+        slack_open_url = (
+            f"https://slack.com/app_redirect?app={settings.slack_app_id}"
+            f"&team={slack.slack_team_id}"
+        )
+
     return ConnectionStatusResponse(
         gmail_connected=gmail is not None,
         gmail_email=gmail.gmail_email if gmail else None,
         slack_connected=slack is not None,
         slack_configured=bool(settings.slack_client_id and settings.slack_signing_secret),
+        slack_send_as_user=slack is not None and slack_has_user_token(slack),
+        slack_team_id=slack.slack_team_id if slack else None,
+        slack_open_url=slack_open_url,
     )
 
 
@@ -132,6 +144,7 @@ def slack_install(token: str = Query(...), db: Session = Depends(get_db)):
     params = urlencode({
         "client_id": settings.slack_client_id,
         "scope": SLACK_BOT_SCOPES,
+        "user_scope": SLACK_USER_SCOPES,
         "redirect_uri": settings.slack_oauth_callback_uri,
         "state": state,
     })
@@ -140,6 +153,7 @@ def slack_install(token: str = Query(...), db: Session = Depends(get_db)):
 
 @router.get("/slack/oauth/callback")
 async def slack_oauth_callback(
+    background_tasks: BackgroundTasks,
     code: str | None = Query(None),
     state: str | None = Query(None),
     error: str | None = Query(None),
@@ -176,11 +190,19 @@ async def slack_oauth_callback(
 
         bot_token = data["access_token"]
         team_id = data["team"]["id"]
-        slack_user_id = data.get("authed_user", {}).get("id", "")
+        authed_user = data.get("authed_user", {})
+        slack_user_id = authed_user.get("id", "")
+        user_token = authed_user.get("access_token")
         if not slack_user_id:
             raise ValueError("No slack user id")
+        if not user_token:
+            raise ValueError(
+                "Slack did not grant user permissions. Add User Token Scopes in your Slack app "
+                "(chat:write, im:write) and reconnect."
+            )
 
-        save_slack_connection(db, user_id, team_id, slack_user_id, bot_token)
+        save_slack_connection(db, user_id, team_id, slack_user_id, bot_token, user_token=user_token)
+        background_tasks.add_task(onboard_slack_user, bot_token, slack_user_id)
         return RedirectResponse(f"{settings.frontend_url}/success?provider=slack&connected=1")
     except Exception as exc:
         logger.exception("Slack OAuth callback failed: %s", exc)

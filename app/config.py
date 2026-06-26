@@ -26,6 +26,8 @@ class Settings:
         self.slack_client_id = os.getenv("SLACK_CLIENT_ID", "")
         self.slack_client_secret = os.getenv("SLACK_CLIENT_SECRET", "")
         self.slack_signing_secret = os.getenv("SLACK_SIGNING_SECRET", "")
+        # App ID from Slack app Basic Information (for "Open in Slack" links)
+        self.slack_app_id = os.getenv("SLACK_APP_ID", "").strip()
 
     @property
     def gmail_oauth_callback_uri(self) -> str:

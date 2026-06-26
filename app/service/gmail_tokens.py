@@ -145,6 +145,7 @@ def save_slack_connection(
     team_id: str,
     slack_user_id: str,
     bot_token: str,
+    user_token: str | None = None,
 ) -> SlackConnection:
     existing = db.query(SlackConnection).filter(SlackConnection.user_id == user_id).first()
     if existing:
@@ -161,6 +162,8 @@ def save_slack_connection(
     conn.slack_team_id = team_id
     conn.slack_user_id = slack_user_id
     conn.bot_token_enc = encrypt_token(bot_token)
+    if user_token:
+        conn.user_token_enc = encrypt_token(user_token)
     db.commit()
     db.refresh(conn)
     return conn
@@ -196,3 +199,13 @@ def delete_slack_connection(db: Session, user_id: int) -> bool:
 
 def get_slack_bot_token(conn: SlackConnection) -> str:
     return decrypt_token(conn.bot_token_enc)
+
+
+def get_slack_user_token(conn: SlackConnection) -> str | None:
+    if not conn.user_token_enc:
+        return None
+    return decrypt_token(conn.user_token_enc)
+
+
+def slack_has_user_token(conn: SlackConnection) -> bool:
+    return bool(conn.user_token_enc)

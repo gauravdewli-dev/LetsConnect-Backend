@@ -12,6 +12,7 @@ from app.service.gmail_tokens import (
     get_slack_connection_by_slack_user,
 )
 from app.service.slack_client import post_to_slack, strip_bot_mention, verify_slack_signature
+from app.service.slack_onboarding import publish_app_home
 from app.service.slack_session import append_exchange, get_history, session_key
 
 router = APIRouter(prefix="/slack", tags=["slack"])
@@ -57,8 +58,9 @@ async def _process_message(
                 bot_token,
                 channel,
                 (
-                    f"Your Slack account isn't linked yet. Sign in at {settings.frontend_url}, "
-                    "connect Gmail, then click *Add to Slack* on the dashboard."
+                    f"Your Slack account isn't linked to LetsConnect yet. "
+                    f"Sign in at {settings.frontend_url}, open *Connected accounts*, "
+                    "and click *Add Slack*."
                 ),
                 thread_ts=reply_thread,
             )
@@ -66,13 +68,6 @@ async def _process_message(
 
         history_key = session_key(slack_user_id, channel)
         history = get_history(history_key)
-
-        await post_to_slack(
-            bot_token,
-            channel,
-            "Checking your Gmail…",
-            thread_ts=reply_thread,
-        )
 
         try:
             result = run_agent(db, conn.user_id, text, history=history or None)
@@ -143,6 +138,16 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
     channel = event.get("channel", "")
     slack_user_id = event.get("user", "")
     thread_ts = event.get("thread_ts") or event.get("ts")
+
+    if event_type == "app_home_opened":
+        db = SessionLocal()
+        try:
+            bot_token = get_slack_bot_token_for_team(db, team_id)
+            if bot_token and slack_user_id:
+                background_tasks.add_task(publish_app_home, bot_token, slack_user_id)
+        finally:
+            db.close()
+        return {"ok": True}
 
     if event_type == "message":
         channel_type = event.get("channel_type", "")

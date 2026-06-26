@@ -9,7 +9,17 @@ SLACK_OAUTH_CALLBACK_PATH = "/slack/oauth/callback"
 SLACK_BOT_SCOPES = (
     "chat:write,"
     "im:history,im:read,im:write,"
-    "channels:history,"
+    "channels:history,channels:read,"
+    "groups:history,groups:read,"
     "app_mentions:read,"
     "users:read"
+)
+
+# User token — messages appear in your normal Slack DMs/channels as you.
+SLACK_USER_SCOPES = (
+    "chat:write,"
+    "im:write,"
+    "users:read,"
+    "channels:history,channels:read,"
+    "groups:history,groups:read"
 )

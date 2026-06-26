@@ -20,9 +20,19 @@ def _users_schema_ok() -> bool:
     return _REQUIRED_USER_COLUMNS.issubset(_table_columns("users"))
 
 
+def _ensure_slack_user_token_column() -> None:
+    if "slack_connections" not in inspect(engine).get_table_names():
+        return
+    if "user_token_enc" in _table_columns("slack_connections"):
+        return
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE slack_connections ADD COLUMN user_token_enc VARCHAR NULL'))
+
+
 def ensure_schema() -> None:
     if _users_schema_ok():
         Base.metadata.create_all(bind=engine)
+        _ensure_slack_user_token_column()
         return
 
     # Wrong or partial schema (often from another app sharing the same Neon DB).
