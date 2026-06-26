@@ -121,6 +121,15 @@ def get_gmail_connection(db: Session, user_id: int) -> GmailConnection | None:
     return db.query(GmailConnection).filter(GmailConnection.user_id == user_id).first()
 
 
+def delete_gmail_connection(db: Session, user_id: int) -> bool:
+    conn = get_gmail_connection(db, user_id)
+    if not conn:
+        return False
+    db.delete(conn)
+    db.commit()
+    return True
+
+
 def get_gmail_client_for_user(db: Session, user_id: int) -> GmailClient:
     conn = get_gmail_connection(db, user_id)
     if not conn:

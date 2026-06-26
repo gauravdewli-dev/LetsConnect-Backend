@@ -22,6 +22,7 @@ from app.service.gmail_agent import run_agent
 from app.service.slack_onboarding import onboard_slack_user
 from app.service.gmail_tokens import (
     create_gmail_flow,
+    delete_gmail_connection,
     delete_slack_connection,
     exchange_gmail_code,
     get_gmail_connection,
@@ -57,6 +58,13 @@ def connection_status(user: User = Depends(get_current_user), db: Session = Depe
         slack_team_id=slack.slack_team_id if slack else None,
         slack_open_url=slack_open_url,
     )
+
+
+@router.delete("/api/gmail", response_model=MessageResponse)
+def disconnect_gmail(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not delete_gmail_connection(db, user.id):
+        raise HTTPException(status_code=404, detail="Gmail not connected")
+    return MessageResponse(message="Gmail disconnected")
 
 
 @router.delete("/api/slack", response_model=MessageResponse)
