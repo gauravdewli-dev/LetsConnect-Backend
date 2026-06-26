@@ -23,7 +23,7 @@ def create_user(db: Session, email: str, password: str) -> User:
     if get_user_by_email(db, normalized):
         raise ValueError("Email already registered")
 
-    user = User(email=normalized, hashed_password=hash_password(password))
+    user = User(email=normalized, hashed_password=hash_password(password), email_verified=False)
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -34,6 +34,8 @@ def authenticate(db: Session, email: str, password: str) -> User:
     user = get_user_by_email(db, email)
     if not user or not verify_password(password, user.hashed_password):
         raise ValueError("Invalid email or password")
+    if not user.email_verified:
+        raise ValueError("Email not verified — check your inbox for the verification code")
     return user
 
 
@@ -71,6 +73,9 @@ def delete_user(db: Session, user: User, password: str) -> None:
     if not verify_password(password, user.hashed_password):
         raise ValueError("Invalid password")
 
+    from app.service.auth_sessions import revoke_all_sessions
+
+    revoke_all_sessions(db, user.id)
     db.query(PendingAction).filter(PendingAction.user_id == user.id).delete()
     db.query(GmailConnection).filter(GmailConnection.user_id == user.id).delete()
     db.query(SlackConnection).filter(SlackConnection.user_id == user.id).delete()

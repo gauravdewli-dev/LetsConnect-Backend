@@ -5,7 +5,7 @@ from sqlalchemy import inspect, text
 from app.configs.database.db import Base, engine
 
 _REQUIRED_USER_COLUMNS = {"id", "email", "hashed_password", "created_at"}
-_DEPENDENT_TABLES = ("pending_actions", "gmail_connections", "slack_connections")
+_DEPENDENT_TABLES = ("pending_actions", "gmail_connections", "slack_connections", "auth_sessions", "password_reset_otps")
 _LEGACY_TABLES = ("users", "users_legacy")
 
 
@@ -29,10 +29,37 @@ def _ensure_slack_user_token_column() -> None:
         conn.execute(text('ALTER TABLE slack_connections ADD COLUMN user_token_enc VARCHAR NULL'))
 
 
+def _ensure_email_verified_column() -> None:
+    if "users" not in inspect(engine).get_table_names():
+        return
+    if "email_verified" in _table_columns("users"):
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT TRUE")
+        )
+
+
+def _ensure_otp_purpose_column() -> None:
+    if "password_reset_otps" not in inspect(engine).get_table_names():
+        return
+    if "purpose" in _table_columns("password_reset_otps"):
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE password_reset_otps "
+                "ADD COLUMN purpose VARCHAR NOT NULL DEFAULT 'password_reset'"
+            )
+        )
+
+
 def ensure_schema() -> None:
     if _users_schema_ok():
         Base.metadata.create_all(bind=engine)
         _ensure_slack_user_token_column()
+        _ensure_email_verified_column()
+        _ensure_otp_purpose_column()
         return
 
     # Wrong or partial schema (often from another app sharing the same Neon DB).

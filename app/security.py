@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.configs.database.db import get_db
-from app.constants import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, OAUTH_STATE_EXPIRE_MINUTES
+from app.constants import ACCESS_TOKEN_EXPIRE_MINUTES, JWT_ALGORITHM, OAUTH_STATE_EXPIRE_MINUTES
 from app.schema.users import User
 
 _bearer = HTTPBearer(auto_error=False)
@@ -44,10 +44,18 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
+def hash_refresh_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def verify_refresh_token(plain: str, hashed: str) -> bool:
+    return hash_refresh_token(plain) == hashed
+
+
 def create_access_token(user_id: int, email: str) -> str:
     settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
-    payload = {"sub": str(user_id), "email": email, "exp": expire}
+    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    payload = {"sub": str(user_id), "email": email, "exp": expire, "type": "access"}
     return jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGORITHM)
 
 
@@ -103,6 +111,8 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     payload = decode_token(credentials.credentials)
     if payload.get("type") == "oauth_state":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+    if payload.get("type") not in (None, "access"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
     return _user_from_payload(payload, db)
 

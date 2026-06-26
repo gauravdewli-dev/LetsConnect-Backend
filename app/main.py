@@ -7,7 +7,7 @@ from app.api.routes_slack import router as slack_router
 from app.config import get_settings
 from app.configs.database.db import Base, engine
 from app.configs.database.migrate import ensure_schema
-from app.schema import connections, pending_action, users  # noqa: F401
+from app.schema import auth_session, connections, password_reset_otp, pending_action, users  # noqa: F401
 
 settings = get_settings()
 

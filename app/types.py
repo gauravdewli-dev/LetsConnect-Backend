@@ -1,31 +1,94 @@
+import re
+
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+_PASSWORD_RE = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,128}$")
+
+
+def _validate_password_strength(value: str) -> str:
+    if not _PASSWORD_RE.match(value):
+        raise ValueError(
+            "Password must be 8–128 characters and include uppercase, lowercase, and a number"
+        )
+    return value
 
 
 class SignupRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=255)
+    email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, value: str) -> str:
+        return _validate_password_strength(value)
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=255)
+    email: EmailStr
     password: str = Field(min_length=1, max_length=128)
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    new_password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, value: str) -> str:
+        return _validate_password_strength(value)
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(min_length=20, max_length=512)
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str = Field(min_length=20, max_length=512)
+
+
 class UpdateUserRequest(BaseModel):
-    email: str | None = Field(default=None, min_length=3, max_length=255)
+    email: EmailStr | None = None
     password: str | None = Field(default=None, min_length=8, max_length=128)
     current_password: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return _validate_password_strength(value)
 
 
 class DeleteUserRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class VerifyEmailRequest(BaseModel):
+    email: EmailStr
+    otp: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+class SignupResponse(BaseModel):
+    requires_verification: bool = True
+    message: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
+    expires_in: int
 
 
 class MessageResponse(BaseModel):

@@ -29,6 +29,17 @@ class Settings:
         # App ID from Slack app Basic Information (for "Open in Slack" links)
         self.slack_app_id = os.getenv("SLACK_APP_ID", "").strip()
 
+        self.app_name = os.getenv("APP_NAME", "LetsConnect")
+        # Email: brevo (recommended free tier) | smtp | resend | auto
+        self.email_provider = os.getenv("EMAIL_PROVIDER", "auto").strip().lower()
+        self.brevo_api_key = os.getenv("BREVO_API_KEY", "").strip()
+        self.resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
+        self.email_from = os.getenv("EMAIL_FROM", "").strip()
+        self.smtp_host = os.getenv("SMTP_HOST", "").strip()
+        self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        self.smtp_user = os.getenv("SMTP_USER", "").strip()
+        self.smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+
     @property
     def gmail_oauth_callback_uri(self) -> str:
         return f"{self.backend_url}/oauth/callback"
