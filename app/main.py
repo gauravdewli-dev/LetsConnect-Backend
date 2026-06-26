@@ -11,7 +11,7 @@ from app.schema import connections, pending_action, users  # noqa: F401
 
 settings = get_settings()
 
-app = FastAPI(title="Slack Gmail Assistant")
+app = FastAPI(title="LetsConnect AI Assistant")
 
 app.add_middleware(
     CORSMiddleware,
