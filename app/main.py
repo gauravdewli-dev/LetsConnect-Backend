@@ -7,12 +7,15 @@ from app.api.routes_slack import router as slack_router
 from app.config import get_settings
 from app.configs.database.db import Base, engine
 from app.configs.database.migrate import ensure_schema
+from app.middleware.security import AuthRateLimitMiddleware, SecurityHeadersMiddleware
 from app.schema import auth_session, connections, password_reset_otp, pending_action, users  # noqa: F401
 
 settings = get_settings()
 
 app = FastAPI(title="LetsConnect AI Assistant")
 
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(AuthRateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],

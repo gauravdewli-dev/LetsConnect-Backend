@@ -1,10 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.configs.database.db import get_db
-from app.constants import ACCESS_TOKEN_EXPIRE_MINUTES
+from app.constants import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    LOGIN_RATE_LIMIT_REQUESTS,
+    LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+)
 from app.schema.users import User
 from app.security import get_current_user
+from app.middleware.rate_limit import auth_rate_limiter
 from app.service import users as user_service
 from app.service.auth_sessions import create_session, refresh_session, revoke_session
 from app.service.email_verification import send_signup_verification, verify_signup_email
@@ -27,6 +32,28 @@ from app.types import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+def _enforce_login_rate_limit(request: Request, email: str) -> None:
+    key = f"login:{_client_ip(request)}:{email.strip().lower()}"
+    if not auth_rate_limiter.is_allowed(
+        key,
+        max_requests=LOGIN_RATE_LIMIT_REQUESTS,
+        window_seconds=LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Please try again later.",
+        )
 
 
 def _value_error_to_http(exc: ValueError) -> HTTPException:
@@ -101,7 +128,8 @@ def resend_verification(payload: ResendVerificationRequest, db: Session = Depend
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    _enforce_login_rate_limit(request, str(payload.email))
     try:
         user = user_service.authenticate(db, str(payload.email), payload.password)
     except ValueError as exc:

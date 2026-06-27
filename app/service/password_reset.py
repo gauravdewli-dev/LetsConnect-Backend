@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.service.auth_sessions import revoke_all_sessions
 from app.security import hash_password
 from app.service.email_service import send_otp_email
 from app.service.otp_service import (
@@ -35,4 +36,5 @@ def reset_password_with_otp(db: Session, email: str, otp: str, new_password: str
         raise ValueError("Invalid or expired code")
 
     user.hashed_password = hash_password(new_password)
+    revoke_all_sessions(db, user.id)
     db.commit()

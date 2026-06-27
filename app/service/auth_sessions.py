@@ -19,6 +19,12 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def create_session(db: Session, user: User) -> tuple[str, str]:
     refresh_token = secrets.token_urlsafe(48)
     expires_at = _utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
@@ -43,7 +49,7 @@ def refresh_session(db: Session, refresh_token: str) -> tuple[str, str, User]:
         )
         .first()
     )
-    if not session or session.expires_at < _utcnow():
+    if not session or _as_utc(session.expires_at) < _utcnow():
         raise ValueError("Invalid or expired session")
 
     user = get_user_by_id(db, session.user_id)

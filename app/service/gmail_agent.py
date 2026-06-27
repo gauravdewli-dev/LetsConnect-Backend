@@ -69,6 +69,22 @@ GMAIL_TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "create_draft",
+        "description": (
+            "Save an email as a draft in the user's Gmail Drafts folder WITHOUT sending it. "
+            "Use this when the user wants to draft/compose an email to review or send later in Gmail."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient email address"},
+                "subject": {"type": "string"},
+                "body": {"type": "string", "description": "Plain text body"},
+            },
+            "required": ["to", "subject", "body"],
+        },
+    },
+    {
         "name": "send_email",
         "description": "Send a new email to a recipient.",
         "parameters": {
@@ -157,12 +173,28 @@ def _system_prompt(has_gmail: bool, has_slack: bool) -> str:
     parts = [
         "You are LetsConnect, a helpful AI assistant connected to the user's work tools.",
         "Keep replies concise and readable (short paragraphs, bullet lists when helpful).",
+        "DRAFTING: When the user asks you to write, draft, compose, or reply to a message or email, "
+        "FIRST produce the full draft as text and show it to them — do NOT send yet. "
+        "Render it clearly (for email, include a 'Subject:' line and the body; for chat, the message text). "
+        "Then ask the user to confirm, edit, or send. "
+        "Only call a send tool (send_email, slack_send_dm, slack_send_channel_message) AFTER the user "
+        "explicitly approves (e.g. 'send it', 'yes', 'go ahead'). "
+        "EXCEPTION: if the user clearly asks to send immediately in one step "
+        "(e.g. 'email Alex saying I'll be late'), draft and send in the same turn. "
+        "Match the tone the user requests (formal, friendly, brief); when unspecified, keep it professional and warm. "
+        "If you lack details needed for a good draft (recipient, key facts), ask before drafting.",
     ]
     if has_gmail:
         parts.append(
             "Gmail tools: fetch real email data before answering email questions. "
             "Use list_unread, search_messages, get_thread, get_message. "
-            "Use send_email to send mail — search first to find the right recipient."
+            "To send mail, use send_email — search first to find the right recipient address if you "
+            "only have a name. When replying to an existing thread, read it first with get_thread so "
+            "your draft quotes the right context and keeps the subject line. "
+            "Always show the drafted subject and body for approval before calling send_email "
+            "(unless the user asked to send in one step). "
+            "If the user wants to keep editing in Gmail or save for later instead of sending, use "
+            "create_draft to save it in their Gmail Drafts folder, then tell them it's saved as a draft."
         )
     if has_slack:
         parts.append(
@@ -170,6 +202,7 @@ def _system_prompt(has_gmail: bool, has_slack: bool) -> str:
             "not as a bot. A DM to Rohit appears in the user's normal 1:1 DM with Rohit. "
             "ALWAYS call slack_send_dm before claiming a message was sent. "
             "Use slack_get_workspace, slack_list_users, slack_read_channel, slack_send_channel_message. "
+            "Show the drafted message text for approval before sending (unless the user asked to send in one step). "
             "If slack_send_dm returns an error, report it — never claim success."
         )
     parts.append("More integrations (Jira, Teams) coming later.")
@@ -198,6 +231,8 @@ def _run_tool(
             return gmail.get_thread(args["thread_id"])
         if name == "get_message":
             return gmail.get_message(args["message_id"])
+        if name == "create_draft":
+            return gmail.create_draft(args["to"], args["subject"], args["body"])
         if name == "send_email":
             return gmail.send_email(args["to"], args["subject"], args["body"])
 

@@ -63,6 +63,9 @@ def update_user(
 
     if password is not None:
         user.hashed_password = hash_password(password)
+        from app.service.auth_sessions import revoke_all_sessions
+
+        revoke_all_sessions(db, user.id)
 
     db.commit()
     db.refresh(user)
