@@ -18,7 +18,7 @@ from app.security import (
     get_current_user,
     get_user_from_query_token,
 )
-from app.service.gmail_agent import run_agent
+from app.service.letsconnect_agent import run_agent
 from app.service.slack_onboarding import onboard_slack_user
 from app.service.gmail_tokens import (
     create_gmail_flow,

@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.config import get_settings
 from app.configs.database.db import SessionLocal
-from app.service.gmail_agent import run_agent
+from app.service.letsconnect_agent import run_agent
 from app.service.gmail_tokens import (
     get_slack_bot_token,
     get_slack_bot_token_for_team,
