@@ -106,14 +106,18 @@ class UserResponse(BaseModel):
 class ConnectionStatusResponse(BaseModel):
     gmail_connected: bool
     gmail_email: str | None = None
+    gmail_display_name: str | None = None
     slack_connected: bool
     slack_configured: bool = False
     slack_send_as_user: bool = False
     slack_team_id: str | None = None
+    slack_team_name: str | None = None
+    slack_display_name: str | None = None
     slack_open_url: str | None = None
     jira_connected: bool = False
     jira_site_url: str | None = None
     jira_site_name: str | None = None
+    jira_display_name: str | None = None
     jira_configured: bool = False
     jira_oauth_callback_url: str | None = None
 

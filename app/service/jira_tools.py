@@ -31,7 +31,7 @@ def _adf_to_text(node: Any) -> str:
     return "".join(parts)
 
 
-def _summarize_issue(issue: dict[str, Any]) -> dict[str, Any]:
+def _summarize_issue(issue: dict[str, Any], *, site_url: str = "") -> dict[str, Any]:
     fields = issue.get("fields") or {}
     status = fields.get("status") or {}
     issue_type = fields.get("issuetype") or {}
@@ -40,9 +40,10 @@ def _summarize_issue(issue: dict[str, Any]) -> dict[str, Any]:
     project = fields.get("project") or {}
     description = fields.get("description")
     description_text = _adf_to_text(description).strip() if description else ""
+    issue_key = issue.get("key")
 
     return {
-        "key": issue.get("key"),
+        "key": issue_key,
         "id": issue.get("id"),
         "summary": fields.get("summary"),
         "description": description_text or None,
@@ -50,9 +51,11 @@ def _summarize_issue(issue: dict[str, Any]) -> dict[str, Any]:
         "issue_type": issue_type.get("name"),
         "priority": priority.get("name"),
         "assignee": assignee.get("displayName") if assignee else None,
+        "assignee_account_id": assignee.get("accountId") if assignee else None,
         "project_key": project.get("key"),
         "project_name": project.get("name"),
         "url": issue.get("self"),
+        "browse_url": f"{site_url.rstrip('/')}/browse/{issue_key}" if site_url and issue_key else None,
         "created": fields.get("created"),
         "updated": fields.get("updated"),
     }
@@ -114,6 +117,15 @@ class JiraTools:
     def get_site(self) -> dict[str, str]:
         return {"site_url": self._site_url, "cloud_id": self._cloud_id}
 
+    def get_me(self) -> dict[str, Any]:
+        data = self._request("GET", "/myself")
+        return {
+            "account_id": data.get("accountId"),
+            "display_name": data.get("displayName"),
+            "email": data.get("emailAddress"),
+            "active": data.get("active", True),
+        }
+
     def list_projects(self, *, max_results: int = 50) -> list[dict[str, Any]]:
         limit = max(1, min(max_results, 100))
         data = self._request(
@@ -154,7 +166,34 @@ class JiraTools:
             },
         )
         issues = data.get("issues") or []
-        return [_summarize_issue(issue) for issue in issues]
+        return [_summarize_issue(issue, site_url=self._site_url) for issue in issues]
+
+    def list_my_issues(
+        self,
+        *,
+        status: str | None = None,
+        project_key: str | None = None,
+        additional_jql: str | None = None,
+        max_results: int = 20,
+    ) -> dict[str, Any]:
+        """Issues assigned to the OAuth-connected Jira user."""
+        me = self.get_me()
+        clauses = ["assignee = currentUser()"]
+        if status:
+            clauses.append(f'status = "{status}"')
+        if project_key:
+            clauses.append(f'project = "{project_key}"')
+        if additional_jql:
+            clauses.append(f"({additional_jql.strip()})")
+        jql = " AND ".join(clauses) + " ORDER BY updated DESC"
+        issues = self.search_issues(jql, max_results=max_results)
+        return {
+            "assignee": me.get("display_name"),
+            "assignee_account_id": me.get("account_id"),
+            "jql": jql,
+            "issues": issues,
+            "count": len(issues),
+        }
 
     def get_issue(self, issue_key: str) -> dict[str, Any]:
         data = self._request(
@@ -162,7 +201,7 @@ class JiraTools:
             f"/issue/{issue_key}",
             params={"fields": "summary,description,status,issuetype,priority,assignee,project,created,updated"},
         )
-        summary = _summarize_issue(data)
+        summary = _summarize_issue(data, site_url=self._site_url)
         summary["browse_url"] = f"{self._site_url}/browse/{issue_key}"
         return summary
 

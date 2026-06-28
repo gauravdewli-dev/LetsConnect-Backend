@@ -61,12 +61,43 @@ def _ensure_otp_purpose_column() -> None:
         )
 
 
+def _ensure_jira_user_columns() -> None:
+    if "jira_connections" not in inspect(engine).get_table_names():
+        return
+    columns = _table_columns("jira_connections")
+    additions = {
+        "jira_account_id": "VARCHAR NULL",
+        "jira_display_name": "VARCHAR NULL",
+        "jira_email": "VARCHAR NULL",
+    }
+    with engine.begin() as conn:
+        for column, ddl in additions.items():
+            if column not in columns:
+                conn.execute(text(f"ALTER TABLE jira_connections ADD COLUMN {column} {ddl}"))
+
+
+def _ensure_connection_identity_columns() -> None:
+    with engine.begin() as conn:
+        if "gmail_connections" in inspect(engine).get_table_names():
+            columns = _table_columns("gmail_connections")
+            if "gmail_display_name" not in columns:
+                conn.execute(text("ALTER TABLE gmail_connections ADD COLUMN gmail_display_name VARCHAR NULL"))
+        if "slack_connections" in inspect(engine).get_table_names():
+            columns = _table_columns("slack_connections")
+            if "slack_display_name" not in columns:
+                conn.execute(text("ALTER TABLE slack_connections ADD COLUMN slack_display_name VARCHAR NULL"))
+            if "slack_team_name" not in columns:
+                conn.execute(text("ALTER TABLE slack_connections ADD COLUMN slack_team_name VARCHAR NULL"))
+
+
 def ensure_schema() -> None:
     if _users_schema_ok():
         Base.metadata.create_all(bind=engine)
         _ensure_slack_user_token_column()
         _ensure_email_verified_column()
         _ensure_otp_purpose_column()
+        _ensure_jira_user_columns()
+        _ensure_connection_identity_columns()
         return
 
     # Wrong or partial schema (often from another app sharing the same Neon DB).

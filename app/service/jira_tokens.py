@@ -72,6 +72,23 @@ def _expires_at_from_token_data(data: dict[str, Any]) -> datetime | None:
     return datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
 
 
+def _sync_jira_user_profile(db: Session, conn: JiraConnection) -> None:
+    access_token = decrypt_token(conn.access_token_enc)
+    jira = JiraTools(access_token=access_token, cloud_id=conn.cloud_id, site_url=conn.site_url)
+    try:
+        profile = jira.get_me()
+    except (RuntimeError, ValueError):
+        return
+    conn.jira_account_id = profile.get("account_id")
+    conn.jira_display_name = profile.get("display_name")
+    conn.jira_email = profile.get("email")
+    db.commit()
+    db.refresh(conn)
+
+
+sync_jira_user_profile = _sync_jira_user_profile
+
+
 def save_jira_connection(db: Session, user_id: int, token_data: dict[str, Any], site: dict[str, Any]) -> JiraConnection:
     access_token = token_data["access_token"]
     refresh_token = token_data.get("refresh_token")
@@ -104,6 +121,7 @@ def save_jira_connection(db: Session, user_id: int, token_data: dict[str, Any], 
     conn.expires_at = _expires_at_from_token_data(token_data)
     db.commit()
     db.refresh(conn)
+    _sync_jira_user_profile(db, conn)
     return conn
 
 
@@ -171,6 +189,9 @@ def get_jira_tools_for_user(db: Session, user_id: int) -> JiraTools:
 
     if _token_needs_refresh(conn):
         _refresh_jira_token(db, conn)
+
+    if not conn.jira_account_id or not conn.jira_display_name:
+        _sync_jira_user_profile(db, conn)
 
     access_token = decrypt_token(conn.access_token_enc)
     return JiraTools(access_token=access_token, cloud_id=conn.cloud_id, site_url=conn.site_url)

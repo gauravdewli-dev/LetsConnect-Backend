@@ -182,8 +182,47 @@ JIRA_TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "jira_get_me",
+        "description": (
+            "Get the connected Jira user's identity (display name, account id). "
+            "Use when you need to confirm who 'my tickets' refers to."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "jira_list_my_issues",
+        "description": (
+            "List Jira issues assigned to the connected user (assignee = currentUser()). "
+            "PREFER this when the user asks about their tickets, my issues, my tasks, "
+            "what is assigned to me, or open work on their board — unless they explicitly "
+            "ask for all team tickets or another person's tickets."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "description": "Optional status filter, e.g. 'In Progress', 'Open', 'Done'",
+                },
+                "project_key": {
+                    "type": "string",
+                    "description": "Optional project key filter, e.g. PROJ",
+                },
+                "additional_jql": {
+                    "type": "string",
+                    "description": "Optional extra JQL AND clause, e.g. priority = High",
+                },
+                "max_results": {"type": "integer", "description": "Max issues (1-50, default 20)"},
+            },
+        },
+    },
+    {
         "name": "jira_search_issues",
-        "description": "Search Jira issues with JQL (e.g. project=PROJ AND status=Open).",
+        "description": (
+            "Search all Jira issues with JQL (team-wide or custom filters). "
+            "Use when the user asks for all tickets, project board, unassigned issues, "
+            "or tickets assigned to someone else — NOT for 'my tickets' (use jira_list_my_issues)."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -296,13 +335,18 @@ def _system_prompt(has_gmail: bool, has_slack: bool, has_jira: bool) -> str:
         )
     if has_jira:
         parts.append(
-            "Jira rules: use jira_search_issues with JQL before answering ticket questions. "
-            "Use jira_get_issue for a single ticket. Use jira_list_projects when the user "
+            "Jira rules: DEFAULT to the connected user's own tickets. When they ask about "
+            "'my tickets', 'my issues', 'my tasks', 'assigned to me', or open work without "
+            "naming someone else, call jira_list_my_issues (assignee = currentUser()). "
+            "Only use jira_search_issues for all team tickets, project-wide boards, "
+            "unassigned issues, or another person's tickets when explicitly requested. "
+            "Use jira_get_me if you need the user's Jira display name. "
+            "Use jira_get_issue for a single ticket by key. Use jira_list_projects when the user "
             "doesn't know project keys. "
             "For create/update, show the draft fields and ask for confirmation before calling "
             "jira_create_issue or jira_update_issue (unless the user asked to do it in one step). "
             "For jira_delete_issue, ALWAYS get explicit confirmation — deletion is permanent. "
-            "Include browse_url links when sharing issue keys."
+            "Include browse_url links when sharing issue keys. Mention assignee when listing tickets."
         )
     if not has_jira:
         parts.append("More integrations (Teams) coming later.")
@@ -358,8 +402,17 @@ def _run_tool(
             raise ValueError("Jira not connected")
         if name == "jira_get_site":
             return jira.get_site()
+        if name == "jira_get_me":
+            return jira.get_me()
         if name == "jira_list_projects":
             return jira.list_projects(max_results=args.get("max_results", 50))
+        if name == "jira_list_my_issues":
+            return jira.list_my_issues(
+                status=args.get("status"),
+                project_key=args.get("project_key"),
+                additional_jql=args.get("additional_jql"),
+                max_results=args.get("max_results", 20),
+            )
         if name == "jira_search_issues":
             return jira.search_issues(args["jql"], max_results=args.get("max_results", 20))
         if name == "jira_get_issue":
@@ -486,13 +539,20 @@ def run_agent(
     if jira:
         tool_definitions.extend(JIRA_TOOL_DEFINITIONS)
 
+    system_instruction = _system_prompt(bool(gmail), bool(slack), bool(jira))
+    if jira_conn and jira_conn.jira_display_name:
+        system_instruction += (
+            f" The connected Jira user is {jira_conn.jira_display_name!r} — "
+            "'my tickets' means issues assigned to this user."
+        )
+
     client = genai.Client(api_key=settings.gemini_api_key)
     tools_used: list[str] = []
     slack_dm_result: dict[str, Any] | None = None
     slack_dm_error: str | None = None
     config = _gemini_config(
         tool_definitions,
-        _system_prompt(bool(gmail), bool(slack), bool(jira)),
+        system_instruction,
     )
 
     contents: list[types.Content] = _build_contents(message, history)

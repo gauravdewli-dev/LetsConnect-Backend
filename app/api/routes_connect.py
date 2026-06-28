@@ -30,20 +30,28 @@ from app.service.gmail_tokens import (
     save_gmail_connection,
     save_slack_connection,
     slack_has_user_token,
+    sync_gmail_display_name,
+    sync_slack_profile,
 )
-from app.service.jira_tokens import connect_jira_from_code, delete_jira_connection, get_jira_connection, jira_authorize_url
+from app.service.jira_tokens import (
+    connect_jira_from_code,
+    delete_jira_connection,
+    get_jira_connection,
+    jira_authorize_url,
+    sync_jira_user_profile,
+)
 from app.types import ChatRequest, ChatResponse, ConnectionStatusResponse, MessageResponse
 
 router = APIRouter(tags=["connect"])
 logger = logging.getLogger(__name__)
 
 
-@router.get("/api/status", response_model=ConnectionStatusResponse)
-def connection_status(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def _build_connection_status(db: Session, user_id: int) -> ConnectionStatusResponse:
     settings = get_settings()
-    gmail = get_gmail_connection(db, user.id)
-    slack = get_slack_connection_by_user(db, user.id)
-    jira = get_jira_connection(db, user.id)
+    gmail = get_gmail_connection(db, user_id)
+    slack = get_slack_connection_by_user(db, user_id)
+    jira = get_jira_connection(db, user_id)
+
     slack_open_url: str | None = None
     if slack and settings.slack_app_id:
         slack_open_url = (
@@ -54,17 +62,44 @@ def connection_status(user: User = Depends(get_current_user), db: Session = Depe
     return ConnectionStatusResponse(
         gmail_connected=gmail is not None,
         gmail_email=gmail.gmail_email if gmail else None,
+        gmail_display_name=gmail.gmail_display_name if gmail else None,
         slack_connected=slack is not None,
         slack_configured=bool(settings.slack_client_id and settings.slack_signing_secret),
         slack_send_as_user=slack is not None and slack_has_user_token(slack),
         slack_team_id=slack.slack_team_id if slack else None,
+        slack_team_name=slack.slack_team_name if slack else None,
+        slack_display_name=slack.slack_display_name if slack else None,
         slack_open_url=slack_open_url,
         jira_connected=jira is not None,
         jira_site_url=jira.site_url if jira else None,
         jira_site_name=jira.site_name if jira else None,
+        jira_display_name=jira.jira_display_name if jira else None,
         jira_configured=bool(settings.jira_client_id and settings.jira_client_secret),
         jira_oauth_callback_url=settings.jira_oauth_callback_uri if settings.jira_client_id else None,
     )
+
+
+@router.get("/api/status", response_model=ConnectionStatusResponse)
+def connection_status(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Fast DB-only read — no external API calls."""
+    return _build_connection_status(db, user.id)
+
+
+@router.post("/api/connections/backfill-profiles", response_model=ConnectionStatusResponse)
+def backfill_connection_profiles(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Sync missing display names from Gmail/Slack/Jira, then return fresh status."""
+    gmail = get_gmail_connection(db, user.id)
+    slack = get_slack_connection_by_user(db, user.id)
+    jira = get_jira_connection(db, user.id)
+
+    if gmail and not gmail.gmail_display_name:
+        sync_gmail_display_name(db, gmail)
+    if slack and not slack.slack_display_name:
+        sync_slack_profile(db, slack)
+    if jira and not jira.jira_display_name:
+        sync_jira_user_profile(db, jira)
+
+    return _build_connection_status(db, user.id)
 
 
 @router.delete("/api/gmail", response_model=MessageResponse)
@@ -223,7 +258,15 @@ async def slack_oauth_callback(
                 "(chat:write, im:write) and reconnect."
             )
 
-        save_slack_connection(db, user_id, team_id, slack_user_id, bot_token, user_token=user_token)
+        save_slack_connection(
+            db,
+            user_id,
+            team_id,
+            slack_user_id,
+            bot_token,
+            user_token=user_token,
+            team_name=data.get("team", {}).get("name"),
+        )
         background_tasks.add_task(onboard_slack_user, bot_token, slack_user_id)
         return RedirectResponse(f"{settings.frontend_url}/success?provider=slack&connected=1")
     except Exception as exc:

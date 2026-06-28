@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse, urlencode
 
+import httpx
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -81,6 +82,20 @@ def exchange_gmail_code(
     return flow.credentials
 
 
+def _fetch_google_display_name(access_token: str) -> str | None:
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        if response.status_code >= 400:
+            return None
+        return response.json().get("name") or None
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
 def save_gmail_connection(db: Session, user_id: int, creds: Credentials) -> GmailConnection:
     gmail = GmailClient(credentials=creds)
     profile = gmail.get_profile()
@@ -94,6 +109,10 @@ def save_gmail_connection(db: Session, user_id: int, creds: Credentials) -> Gmai
         db.add(conn)
 
     conn.gmail_email = email
+    if creds.token:
+        display_name = _fetch_google_display_name(creds.token)
+        if display_name:
+            conn.gmail_display_name = display_name
     conn.refresh_token_enc = encrypt_token(creds.refresh_token or "")
     conn.access_token_enc = encrypt_token(creds.token) if creds.token else None
     conn.expires_at = creds.expiry
@@ -148,6 +167,48 @@ def get_gmail_client_for_user(db: Session, user_id: int) -> GmailClient:
     return GmailClient(credentials=creds)
 
 
+def sync_gmail_display_name(db: Session, conn: GmailConnection) -> None:
+    if conn.gmail_display_name:
+        return
+    try:
+        creds = _credentials_from_connection(conn)
+        if not creds.valid and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            conn.access_token_enc = encrypt_token(creds.token) if creds.token else None
+            conn.expires_at = creds.expiry
+        if creds.token:
+            display_name = _fetch_google_display_name(creds.token)
+            if display_name:
+                conn.gmail_display_name = display_name
+                db.commit()
+                db.refresh(conn)
+    except (ValueError, httpx.HTTPError):
+        return
+
+
+def _fetch_slack_user_display_name(token: str, slack_user_id: str) -> str | None:
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(
+                "https://slack.com/api/users.info",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"user": slack_user_id},
+            )
+        data = response.json()
+        if not data.get("ok"):
+            return None
+        user = data.get("user") or {}
+        profile = user.get("profile") or {}
+        return (
+            profile.get("real_name")
+            or profile.get("display_name")
+            or user.get("real_name")
+            or user.get("name")
+        )
+    except httpx.HTTPError:
+        return None
+
+
 def save_slack_connection(
     db: Session,
     user_id: int,
@@ -155,6 +216,8 @@ def save_slack_connection(
     slack_user_id: str,
     bot_token: str,
     user_token: str | None = None,
+    *,
+    team_name: str | None = None,
 ) -> SlackConnection:
     existing = db.query(SlackConnection).filter(SlackConnection.user_id == user_id).first()
     if existing:
@@ -173,9 +236,27 @@ def save_slack_connection(
     conn.bot_token_enc = encrypt_token(bot_token)
     if user_token:
         conn.user_token_enc = encrypt_token(user_token)
+    if team_name:
+        conn.slack_team_name = team_name
+    token_for_profile = user_token or bot_token
+    display_name = _fetch_slack_user_display_name(token_for_profile, slack_user_id)
+    if display_name:
+        conn.slack_display_name = display_name
     db.commit()
     db.refresh(conn)
     return conn
+
+
+def sync_slack_profile(db: Session, conn: SlackConnection) -> None:
+    if conn.slack_display_name and conn.slack_team_name:
+        return
+    token = get_slack_user_token(conn) or get_slack_bot_token(conn)
+    if not conn.slack_display_name:
+        display_name = _fetch_slack_user_display_name(token, conn.slack_user_id)
+        if display_name:
+            conn.slack_display_name = display_name
+    db.commit()
+    db.refresh(conn)
 
 
 def get_slack_connection_by_user(db: Session, user_id: int) -> SlackConnection | None:
