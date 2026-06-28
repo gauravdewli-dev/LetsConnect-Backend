@@ -36,3 +36,19 @@ class SlackConnection(Base):
     created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     user = relationship("User", backref="slack_connection")
+
+
+class JiraConnection(Base):
+    __tablename__ = "jira_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    cloud_id = Column(String, nullable=False)
+    site_url = Column(String, nullable=False)
+    site_name = Column(String, nullable=False, default="")
+    access_token_enc = Column(String, nullable=False)
+    refresh_token_enc = Column(String, nullable=False)
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+    user = relationship("User", backref="jira_connection")

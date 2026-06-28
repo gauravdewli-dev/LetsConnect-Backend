@@ -28,6 +28,10 @@ class Settings:
         self.slack_signing_secret = os.getenv("SLACK_SIGNING_SECRET", "")
         # App ID from Slack app Basic Information (for "Open in Slack" links)
         self.slack_app_id = os.getenv("SLACK_APP_ID", "").strip()
+        self.jira_client_id = os.getenv("JIRA_CLIENT_ID", "").strip()
+        self.jira_client_secret = os.getenv("JIRA_CLIENT_SECRET", "").strip()
+        # Optional override if BACKEND_URL differs from the URL registered in Atlassian
+        self.jira_oauth_callback_uri_override = os.getenv("JIRA_OAUTH_CALLBACK_URI", "").strip().rstrip("/")
 
         self.app_name = os.getenv("APP_NAME", "LetsConnect")
         # Email: brevo (recommended free tier) | smtp | resend | auto
@@ -61,3 +65,9 @@ class Settings:
     @property
     def slack_oauth_callback_uri(self) -> str:
         return f"{self.backend_url}/slack/oauth/callback"
+
+    @property
+    def jira_oauth_callback_uri(self) -> str:
+        if self.jira_oauth_callback_uri_override:
+            return self.jira_oauth_callback_uri_override
+        return f"{self.backend_url}/jira/oauth/callback"

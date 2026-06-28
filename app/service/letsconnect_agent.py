@@ -14,6 +14,8 @@ from app.service.gmail_tokens import (
     get_slack_connection_by_user,
     get_slack_user_token,
 )
+from app.service.jira_tokens import get_jira_connection, get_jira_tools_for_user
+from app.service.jira_tools import JiraTools
 from app.service.slack_tools import SlackTools
 from gmail_mcp.gmail_client import GmailClient
 
@@ -163,13 +165,100 @@ SLACK_TOOL_DEFINITIONS = [
     },
 ]
 
+JIRA_TOOL_DEFINITIONS = [
+    {
+        "name": "jira_get_site",
+        "description": "Get the connected Jira Cloud site URL and cloud ID.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "jira_list_projects",
+        "description": "List Jira projects the user can access (key, name).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "max_results": {"type": "integer", "description": "Max projects (1-100, default 50)"},
+            },
+        },
+    },
+    {
+        "name": "jira_search_issues",
+        "description": "Search Jira issues with JQL (e.g. project=PROJ AND status=Open).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "jql": {"type": "string", "description": "JQL query"},
+                "max_results": {"type": "integer", "description": "Max issues (1-50, default 20)"},
+            },
+            "required": ["jql"],
+        },
+    },
+    {
+        "name": "jira_get_issue",
+        "description": "Get full details for a Jira issue by key (e.g. PROJ-123).",
+        "parameters": {
+            "type": "object",
+            "properties": {"issue_key": {"type": "string"}},
+            "required": ["issue_key"],
+        },
+    },
+    {
+        "name": "jira_create_issue",
+        "description": (
+            "Create a new Jira issue. Show the draft (project, type, summary, description) "
+            "and confirm with the user before calling unless they asked to create immediately."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_key": {"type": "string", "description": "Project key, e.g. PROJ"},
+                "summary": {"type": "string"},
+                "issue_type": {"type": "string", "description": "Task, Bug, Story, etc."},
+                "description": {"type": "string"},
+                "priority": {"type": "string", "description": "Optional priority name"},
+            },
+            "required": ["project_key", "summary", "issue_type"],
+        },
+    },
+    {
+        "name": "jira_update_issue",
+        "description": (
+            "Update an existing Jira issue (summary, description, or priority). "
+            "Confirm changes with the user before calling unless they asked to update immediately."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "issue_key": {"type": "string"},
+                "summary": {"type": "string"},
+                "description": {"type": "string"},
+                "priority": {"type": "string"},
+            },
+            "required": ["issue_key"],
+        },
+    },
+    {
+        "name": "jira_delete_issue",
+        "description": (
+            "Permanently delete a Jira issue. ALWAYS confirm with the user before calling — "
+            "deletion cannot be undone."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"issue_key": {"type": "string"}},
+            "required": ["issue_key"],
+        },
+    },
+]
+
 MAX_TOOL_ROUNDS = 8
 
 GMAIL_TOOL_NAMES = {t["name"] for t in GMAIL_TOOL_DEFINITIONS}
 SLACK_TOOL_NAMES = {t["name"] for t in SLACK_TOOL_DEFINITIONS}
+JIRA_TOOL_NAMES = {t["name"] for t in JIRA_TOOL_DEFINITIONS}
 
 
-def _system_prompt(has_gmail: bool, has_slack: bool) -> str:
+def _system_prompt(has_gmail: bool, has_slack: bool, has_jira: bool) -> str:
     parts = [
         "You are LetsConnect, a helpful AI assistant connected to the user's work tools.",
         "Keep replies concise and readable (short paragraphs, bullet lists when helpful).",
@@ -205,7 +294,18 @@ def _system_prompt(has_gmail: bool, has_slack: bool) -> str:
             "Show the drafted message text for approval before sending (unless the user asked to send in one step). "
             "If slack_send_dm returns an error, report it — never claim success."
         )
-    parts.append("More integrations (Jira, Teams) coming later.")
+    if has_jira:
+        parts.append(
+            "Jira rules: use jira_search_issues with JQL before answering ticket questions. "
+            "Use jira_get_issue for a single ticket. Use jira_list_projects when the user "
+            "doesn't know project keys. "
+            "For create/update, show the draft fields and ask for confirmation before calling "
+            "jira_create_issue or jira_update_issue (unless the user asked to do it in one step). "
+            "For jira_delete_issue, ALWAYS get explicit confirmation — deletion is permanent. "
+            "Include browse_url links when sharing issue keys."
+        )
+    if not has_jira:
+        parts.append("More integrations (Teams) coming later.")
     return " ".join(parts)
 
 
@@ -215,6 +315,7 @@ def _run_tool(
     *,
     gmail: GmailClient | None,
     slack: SlackTools | None,
+    jira: JiraTools | None,
 ) -> Any:
     if name in GMAIL_TOOL_NAMES:
         if not gmail:
@@ -251,6 +352,35 @@ def _run_tool(
             return slack.send_dm(args["user"], args["text"])
         if name == "slack_send_channel_message":
             return slack.send_channel_message(args["channel"], args["text"])
+
+    if name in JIRA_TOOL_NAMES:
+        if not jira:
+            raise ValueError("Jira not connected")
+        if name == "jira_get_site":
+            return jira.get_site()
+        if name == "jira_list_projects":
+            return jira.list_projects(max_results=args.get("max_results", 50))
+        if name == "jira_search_issues":
+            return jira.search_issues(args["jql"], max_results=args.get("max_results", 20))
+        if name == "jira_get_issue":
+            return jira.get_issue(args["issue_key"])
+        if name == "jira_create_issue":
+            return jira.create_issue(
+                args["project_key"],
+                args["summary"],
+                args["issue_type"],
+                description=args.get("description"),
+                priority=args.get("priority"),
+            )
+        if name == "jira_update_issue":
+            return jira.update_issue(
+                args["issue_key"],
+                summary=args.get("summary"),
+                description=args.get("description"),
+                priority=args.get("priority"),
+            )
+        if name == "jira_delete_issue":
+            return jira.delete_issue(args["issue_key"])
 
     raise ValueError(f"Unknown tool: {name}")
 
@@ -332,8 +462,9 @@ def run_agent(
 
     gmail_conn = get_gmail_connection(db, user_id)
     slack_conn = get_slack_connection_by_user(db, user_id)
-    if not gmail_conn and not slack_conn:
-        raise ValueError("Connect Gmail or Slack in the dashboard first")
+    jira_conn = get_jira_connection(db, user_id)
+    if not gmail_conn and not slack_conn and not jira_conn:
+        raise ValueError("Connect Gmail, Slack, or Jira in the dashboard first")
 
     gmail = get_gmail_client_for_user(db, user_id) if gmail_conn else None
     slack = (
@@ -345,18 +476,24 @@ def run_agent(
         if slack_conn
         else None
     )
+    jira = get_jira_tools_for_user(db, user_id) if jira_conn else None
 
     tool_definitions: list[dict[str, Any]] = []
     if gmail:
         tool_definitions.extend(GMAIL_TOOL_DEFINITIONS)
     if slack:
         tool_definitions.extend(SLACK_TOOL_DEFINITIONS)
+    if jira:
+        tool_definitions.extend(JIRA_TOOL_DEFINITIONS)
 
     client = genai.Client(api_key=settings.gemini_api_key)
     tools_used: list[str] = []
     slack_dm_result: dict[str, Any] | None = None
     slack_dm_error: str | None = None
-    config = _gemini_config(tool_definitions, _system_prompt(bool(gmail), bool(slack)))
+    config = _gemini_config(
+        tool_definitions,
+        _system_prompt(bool(gmail), bool(slack), bool(jira)),
+    )
 
     contents: list[types.Content] = _build_contents(message, history)
 
@@ -397,7 +534,7 @@ def run_agent(
                 args = dict(function_call.args) if function_call.args else {}
                 tools_used.append(name)
                 try:
-                    result = _run_tool(name, args, gmail=gmail, slack=slack)
+                    result = _run_tool(name, args, gmail=gmail, slack=slack, jira=jira)
                 except (ValueError, RuntimeError) as exc:
                     result = {"error": str(exc)}
 

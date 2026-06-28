@@ -14,6 +14,14 @@ SLACK_SIGNATURE_MAX_AGE_SECONDS = 300
 
 GMAIL_OAUTH_CALLBACK_PATH = "/oauth/callback"
 SLACK_OAUTH_CALLBACK_PATH = "/slack/oauth/callback"
+JIRA_OAUTH_CALLBACK_PATH = "/jira/oauth/callback"
+
+JIRA_SCOPES = (
+    "read:jira-work "
+    "write:jira-work "
+    "read:jira-user "
+    "offline_access"
+)
 
 SLACK_BOT_SCOPES = (
     "chat:write,"

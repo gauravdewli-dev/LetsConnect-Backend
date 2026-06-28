@@ -5,7 +5,14 @@ from sqlalchemy import inspect, text
 from app.configs.database.db import Base, engine
 
 _REQUIRED_USER_COLUMNS = {"id", "email", "hashed_password", "created_at"}
-_DEPENDENT_TABLES = ("pending_actions", "gmail_connections", "slack_connections", "auth_sessions", "password_reset_otps")
+_DEPENDENT_TABLES = (
+    "pending_actions",
+    "gmail_connections",
+    "slack_connections",
+    "jira_connections",
+    "auth_sessions",
+    "password_reset_otps",
+)
 _LEGACY_TABLES = ("users", "users_legacy")
 
 

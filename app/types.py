@@ -111,6 +111,11 @@ class ConnectionStatusResponse(BaseModel):
     slack_send_as_user: bool = False
     slack_team_id: str | None = None
     slack_open_url: str | None = None
+    jira_connected: bool = False
+    jira_site_url: str | None = None
+    jira_site_name: str | None = None
+    jira_configured: bool = False
+    jira_oauth_callback_url: str | None = None
 
 
 class ChatMessage(BaseModel):

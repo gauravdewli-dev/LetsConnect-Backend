@@ -31,6 +31,7 @@ from app.service.gmail_tokens import (
     save_slack_connection,
     slack_has_user_token,
 )
+from app.service.jira_tokens import connect_jira_from_code, delete_jira_connection, get_jira_connection, jira_authorize_url
 from app.types import ChatRequest, ChatResponse, ConnectionStatusResponse, MessageResponse
 
 router = APIRouter(tags=["connect"])
@@ -42,6 +43,7 @@ def connection_status(user: User = Depends(get_current_user), db: Session = Depe
     settings = get_settings()
     gmail = get_gmail_connection(db, user.id)
     slack = get_slack_connection_by_user(db, user.id)
+    jira = get_jira_connection(db, user.id)
     slack_open_url: str | None = None
     if slack and settings.slack_app_id:
         slack_open_url = (
@@ -57,6 +59,11 @@ def connection_status(user: User = Depends(get_current_user), db: Session = Depe
         slack_send_as_user=slack is not None and slack_has_user_token(slack),
         slack_team_id=slack.slack_team_id if slack else None,
         slack_open_url=slack_open_url,
+        jira_connected=jira is not None,
+        jira_site_url=jira.site_url if jira else None,
+        jira_site_name=jira.site_name if jira else None,
+        jira_configured=bool(settings.jira_client_id and settings.jira_client_secret),
+        jira_oauth_callback_url=settings.jira_oauth_callback_uri if settings.jira_client_id else None,
     )
 
 
@@ -72,6 +79,13 @@ def disconnect_slack(user: User = Depends(get_current_user), db: Session = Depen
     if not delete_slack_connection(db, user.id):
         raise HTTPException(status_code=404, detail="Slack not connected")
     return MessageResponse(message="Slack disconnected")
+
+
+@router.delete("/api/jira", response_model=MessageResponse)
+def disconnect_jira(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not delete_jira_connection(db, user.id):
+        raise HTTPException(status_code=404, detail="Jira not connected")
+    return MessageResponse(message="Jira disconnected")
 
 
 @router.post("/api/chat", response_model=ChatResponse)
@@ -216,4 +230,45 @@ async def slack_oauth_callback(
         logger.exception("Slack OAuth callback failed: %s", exc)
         return RedirectResponse(
             f"{settings.frontend_url}/success?provider=slack&error={quote(str(exc))}"
+        )
+
+
+@router.get("/jira/connect")
+def jira_connect(token: str = Query(...), db: Session = Depends(get_db)):
+    settings = get_settings()
+    if not settings.jira_client_id:
+        raise HTTPException(status_code=503, detail="Jira not configured")
+    user = get_user_from_query_token(token, db)
+    state = create_oauth_state_token(user.id, "jira")
+    redirect_uri = settings.jira_oauth_callback_uri
+    logger.info("Jira OAuth redirect_uri=%s", redirect_uri)
+    return RedirectResponse(jira_authorize_url(state))
+
+
+@router.get("/jira/oauth/callback")
+async def jira_oauth_callback(
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    settings = get_settings()
+    if error:
+        return RedirectResponse(
+            f"{settings.frontend_url}/success?provider=jira&error={quote(error)}"
+        )
+    if not code or not state:
+        return RedirectResponse(f"{settings.frontend_url}/success?provider=jira&error=missing_params")
+
+    try:
+        payload = decode_token(state)
+        if payload.get("type") != "oauth_state" or payload.get("provider") != "jira":
+            raise ValueError("Invalid state")
+        user_id = int(payload["sub"])
+        await connect_jira_from_code(db, user_id, code)
+        return RedirectResponse(f"{settings.frontend_url}/success?provider=jira&connected=1")
+    except Exception as exc:
+        logger.exception("Jira OAuth callback failed: %s", exc)
+        return RedirectResponse(
+            f"{settings.frontend_url}/success?provider=jira&error={quote(str(exc))}"
         )
