@@ -79,10 +79,25 @@ def append_message(
     return doc["_id"]
 
 
-def get_agent_history(conversation_id: str, limit: int = AGENT_HISTORY_LIMIT) -> list[dict[str, str]]:
+def clear_slack_channel_for_user(db: Session, user_id: int) -> None:
+    db.query(Conversation).filter(
+        Conversation.user_id == user_id,
+        Conversation.slack_channel_id.isnot(None),
+    ).update({Conversation.slack_channel_id: None}, synchronize_session=False)
+    db.commit()
+
+
+def get_agent_history(
+    conversation_id: str,
+    user_id: int,
+    limit: int = AGENT_HISTORY_LIMIT,
+) -> list[dict[str, str]]:
     cursor = (
         get_messages_collection()
-        .find({"conversation_id": conversation_id}, {"role": 1, "content": 1, "created_at": 1})
+        .find(
+            {"conversation_id": conversation_id, "user_id": user_id},
+            {"role": 1, "content": 1, "created_at": 1},
+        )
         .sort("created_at", -1)
         .limit(limit)
     )
@@ -107,11 +122,12 @@ def _serialize_message(doc: dict) -> dict:
 
 def get_messages_page(
     conversation_id: str,
+    user_id: int,
     *,
     limit: int = UI_MESSAGE_PAGE_LIMIT,
     before: datetime | None = None,
 ) -> tuple[list[dict], str | None]:
-    query: dict = {"conversation_id": conversation_id}
+    query: dict = {"conversation_id": conversation_id, "user_id": user_id}
     if before is not None:
         query["created_at"] = {"$lt": before}
 
@@ -139,6 +155,7 @@ def handle_chat_message(
     *,
     channel: str = "web",
     conversation_id: str | None = None,
+    slack_channel_id: str | None = None,
 ) -> dict:
     if conversation_id:
         conv = get_conversation_for_user(db, user_id, conversation_id)
@@ -147,7 +164,10 @@ def handle_chat_message(
     else:
         conv = get_or_create_primary_conversation(db, user_id)
 
-    history = get_agent_history(conv.id, limit=AGENT_HISTORY_LIMIT)
+    if channel == "slack" and slack_channel_id:
+        conv.slack_channel_id = slack_channel_id
+
+    history = get_agent_history(conv.id, user_id, limit=AGENT_HISTORY_LIMIT)
     result = run_agent(db, user_id, message, history=history or None)
     reply = result["reply"]
     tools_used = result.get("tools_used", [])

@@ -66,7 +66,9 @@ async def _process_message(
             return
 
         try:
-            result = handle_chat_message(db, conn.user_id, text, channel="slack")
+            result = handle_chat_message(
+                db, conn.user_id, text, channel="slack", slack_channel_id=channel
+            )
             reply = result["reply"]
         except ValueError as exc:
             reply = str(exc)

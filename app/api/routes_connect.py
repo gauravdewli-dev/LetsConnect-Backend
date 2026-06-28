@@ -19,6 +19,7 @@ from app.security import (
     get_user_from_query_token,
 )
 from app.service.chat_service import (
+    clear_slack_channel_for_user,
     get_messages_page,
     get_or_create_primary_conversation,
     handle_chat_message,
@@ -120,11 +121,12 @@ def disconnect_gmail(user: User = Depends(get_current_user), db: Session = Depen
     return MessageResponse(message="Gmail disconnected")
 
 
-@router.delete("/api/slack", response_model=MessageResponse)
+@router.delete("/api/slack", response_model=ConnectionStatusResponse)
 def disconnect_slack(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not delete_slack_connection(db, user.id):
         raise HTTPException(status_code=404, detail="Slack not connected")
-    return MessageResponse(message="Slack disconnected")
+    clear_slack_channel_for_user(db, user.id)
+    return _build_connection_status(db, user.id)
 
 
 @router.delete("/api/jira", response_model=MessageResponse)
@@ -151,7 +153,7 @@ def chat_messages(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Invalid before cursor") from exc
 
-    messages, next_cursor = get_messages_page(conv.id, limit=limit, before=before_dt)
+    messages, next_cursor = get_messages_page(conv.id, user.id, limit=limit, before=before_dt)
     return ChatHistoryResponse(
         conversation_id=conv.id,
         messages=[StoredChatMessage(**m) for m in messages],
