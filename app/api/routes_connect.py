@@ -18,7 +18,11 @@ from app.security import (
     get_current_user,
     get_user_from_query_token,
 )
-from app.service.letsconnect_agent import run_agent
+from app.service.chat_service import (
+    get_messages_page,
+    get_or_create_primary_conversation,
+    handle_chat_message,
+)
 from app.service.slack_onboarding import onboard_slack_user
 from app.service.gmail_tokens import (
     create_gmail_flow,
@@ -40,7 +44,14 @@ from app.service.jira_tokens import (
     jira_authorize_url,
     sync_jira_user_profile,
 )
-from app.types import ChatRequest, ChatResponse, ConnectionStatusResponse, MessageResponse
+from app.types import (
+    ChatHistoryResponse,
+    ChatRequest,
+    ChatResponse,
+    ConnectionStatusResponse,
+    MessageResponse,
+    StoredChatMessage,
+)
 
 router = APIRouter(tags=["connect"])
 logger = logging.getLogger(__name__)
@@ -123,23 +134,59 @@ def disconnect_jira(user: User = Depends(get_current_user), db: Session = Depend
     return MessageResponse(message="Jira disconnected")
 
 
+@router.get("/api/chat/messages", response_model=ChatHistoryResponse)
+def chat_messages(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=100),
+    before: str | None = Query(default=None),
+):
+    conv = get_or_create_primary_conversation(db, user.id)
+    before_dt = None
+    if before:
+        try:
+            from datetime import datetime
+
+            before_dt = datetime.fromisoformat(before.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid before cursor") from exc
+
+    messages, next_cursor = get_messages_page(conv.id, limit=limit, before=before_dt)
+    return ChatHistoryResponse(
+        conversation_id=conv.id,
+        messages=[StoredChatMessage(**m) for m in messages],
+        next_cursor=next_cursor,
+    )
+
+
 @router.post("/api/chat", response_model=ChatResponse)
 def chat(
     payload: ChatRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    history = [{"role": m.role, "content": m.content} for m in payload.history]
     try:
-        result = run_agent(db, user.id, payload.message, history=history or None)
+        result = handle_chat_message(
+            db,
+            user.id,
+            payload.message,
+            channel="web",
+            conversation_id=payload.conversation_id,
+        )
     except ValueError as exc:
         detail = str(exc)
+        if detail == "Conversation not found":
+            raise HTTPException(status_code=404, detail=detail) from exc
         status = 429 if "rate limit" in detail.lower() else 400
         raise HTTPException(status_code=status, detail=detail) from exc
     except Exception as exc:
         logger.exception("Chat agent failed: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to process your message") from exc
-    return ChatResponse(reply=result["reply"], tools_used=result.get("tools_used", []))
+    return ChatResponse(
+        reply=result["reply"],
+        tools_used=result["tools_used"],
+        conversation_id=result["conversation_id"],
+    )
 
 
 @router.get("/gmail/connect")

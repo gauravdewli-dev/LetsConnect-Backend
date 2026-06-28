@@ -8,7 +8,8 @@ from app.config import get_settings
 from app.configs.database.db import Base, engine
 from app.configs.database.migrate import ensure_schema
 from app.middleware.security import AuthRateLimitMiddleware, SecurityHeadersMiddleware
-from app.schema import auth_session, connections, password_reset_otp, pending_action, users  # noqa: F401
+from app.configs.mongodb.client import ensure_mongo_indexes
+from app.schema import auth_session, connections, conversations, password_reset_otp, pending_action, users  # noqa: F401
 
 settings = get_settings()
 
@@ -32,5 +33,6 @@ try:
     conn = engine.connect()
     conn.close()
     ensure_schema()
+    ensure_mongo_indexes()
 except Exception as e:
     print(f"Error connecting to the database: {e}")

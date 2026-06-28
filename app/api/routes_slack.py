@@ -5,7 +5,6 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.config import get_settings
 from app.configs.database.db import SessionLocal
-from app.service.letsconnect_agent import run_agent
 from app.service.gmail_tokens import (
     get_slack_bot_token,
     get_slack_bot_token_for_team,
@@ -13,7 +12,7 @@ from app.service.gmail_tokens import (
 )
 from app.service.slack_client import post_to_slack, strip_bot_mention, verify_slack_signature
 from app.service.slack_onboarding import publish_app_home
-from app.service.slack_session import append_exchange, get_history, session_key
+from app.service.chat_service import handle_chat_message
 
 router = APIRouter(prefix="/slack", tags=["slack"])
 logger = logging.getLogger(__name__)
@@ -66,19 +65,14 @@ async def _process_message(
             )
             return
 
-        history_key = session_key(slack_user_id, channel)
-        history = get_history(history_key)
-
         try:
-            result = run_agent(db, conn.user_id, text, history=history or None)
+            result = handle_chat_message(db, conn.user_id, text, channel="slack")
             reply = result["reply"]
         except ValueError as exc:
             reply = str(exc)
         except Exception:
             logger.exception("Slack agent failed for user=%s", slack_user_id)
             reply = "Sorry, something went wrong. Please try again."
-
-        append_exchange(history_key, text, reply)
         await post_to_slack(bot_token, channel, reply, thread_ts=reply_thread)
     except Exception:
         logger.exception("Failed to process Slack message from user=%s", slack_user_id)

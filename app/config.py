@@ -16,6 +16,10 @@ class Settings:
         self.database_url = os.getenv("DATABASE_URL", "").strip()
         if not self.database_url:
             raise ValueError("DATABASE_URL is required (PostgreSQL connection string)")
+        self.mongodb_uri = os.getenv("MONGODB_URI", "").strip()
+        if not self.mongodb_uri:
+            raise ValueError("MONGODB_URI is required (MongoDB Atlas connection string)")
+        self.mongodb_db_name = os.getenv("MONGODB_DB_NAME", "letsconnect").strip() or "letsconnect"
         self.jwt_secret = os.getenv("JWT_SECRET", "change-me-in-production")
         self.encryption_key = os.getenv("ENCRYPTION_KEY", "")
         self.frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")

@@ -129,9 +129,25 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
-    history: list[ChatMessage] = Field(default_factory=list, max_length=20)
+    conversation_id: str | None = Field(default=None, max_length=36)
 
 
 class ChatResponse(BaseModel):
     reply: str
     tools_used: list[str] = Field(default_factory=list)
+    conversation_id: str
+
+
+class StoredChatMessage(BaseModel):
+    id: str
+    role: str
+    content: str
+    channel: str = "web"
+    tools_used: list[str] = Field(default_factory=list)
+    created_at: str
+
+
+class ChatHistoryResponse(BaseModel):
+    conversation_id: str
+    messages: list[StoredChatMessage]
+    next_cursor: str | None = None

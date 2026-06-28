@@ -12,6 +12,7 @@ _DEPENDENT_TABLES = (
     "jira_connections",
     "auth_sessions",
     "password_reset_otps",
+    "conversations",
 )
 _LEGACY_TABLES = ("users", "users_legacy")
 
