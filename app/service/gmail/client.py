@@ -8,9 +8,8 @@ from email.utils import parseaddr
 from pathlib import Path
 from typing import Any
 
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-
-from gmail_mcp.auth import load_credentials
 
 
 def _header_value(headers: list[dict[str, str]], name: str) -> str | None:
@@ -136,9 +135,8 @@ def _encode_message(msg: MIMEMultipart) -> dict[str, str]:
 
 
 class GmailClient:
-    def __init__(self, credentials=None) -> None:
-        creds = credentials if credentials is not None else load_credentials()
-        self._service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    def __init__(self, *, credentials: Credentials) -> None:
+        self._service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
 
     def get_profile(self) -> dict[str, Any]:
         profile = self._service.users().getProfile(userId="me").execute()
@@ -327,7 +325,6 @@ class GmailClient:
             headers, "Message-Id"
         )
         from_header = _header_value(headers, "From") or ""
-        to_header = _header_value(headers, "To") or ""
         _, reply_to = parseaddr(from_header)
         if not reply_to:
             raise ValueError("Could not determine reply recipient")

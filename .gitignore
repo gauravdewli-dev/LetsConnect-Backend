@@ -19,8 +19,6 @@ app.db
 # Gmail OAuth secrets
 credentials.json
 token.json
-gmail_mcp/secrets/
-
 # Editor / IDE
 .cursor/
 .idea/

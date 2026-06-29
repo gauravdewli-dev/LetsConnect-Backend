@@ -13,8 +13,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.schema.connections import GmailConnection, SlackConnection
 from app.security import decrypt_token, encrypt_token
-from gmail_mcp.constants import SCOPES
-from gmail_mcp.gmail_client import GmailClient
+from app.service.gmail import GMAIL_SCOPES, GmailClient
 
 
 def _enable_local_oauth_http() -> None:
@@ -43,7 +42,7 @@ def create_gmail_flow() -> Flow:
     settings = get_settings()
     return Flow.from_client_secrets_file(
         str(_credentials_path()),
-        scopes=SCOPES,
+        scopes=GMAIL_SCOPES,
         redirect_uri=settings.gmail_oauth_callback_uri,
     )
 
@@ -129,7 +128,7 @@ def _credentials_from_connection(conn: GmailConnection) -> Credentials:
         token_uri="https://oauth2.googleapis.com/token",
         client_id=client_id,
         client_secret=client_secret,
-        scopes=SCOPES,
+        scopes=GMAIL_SCOPES,
     )
     if conn.expires_at:
         creds.expiry = conn.expires_at

@@ -17,7 +17,7 @@ from app.service.gmail_tokens import (
 from app.service.jira_tokens import get_jira_connection, get_jira_tools_for_user
 from app.service.jira_tools import JiraTools
 from app.service.slack_tools import SlackTools
-from gmail_mcp.gmail_client import GmailClient
+from app.service.gmail import GmailClient
 
 GMAIL_TOOL_DEFINITIONS = [
     {
