@@ -7,11 +7,14 @@ from app.api.routes_slack import router as slack_router
 from app.config import get_settings
 from app.configs.database.db import Base, engine
 from app.configs.database.migrate import ensure_schema
+from app.middleware.access_log import configure_sanitized_access_logs
 from app.middleware.security import AuthRateLimitMiddleware, SecurityHeadersMiddleware
 from app.configs.mongodb.client import ensure_mongo_indexes
 from app.schema import auth_session, connections, conversations, password_reset_otp, pending_action, users  # noqa: F401
 
 settings = get_settings()
+
+configure_sanitized_access_logs()
 
 app = FastAPI(title="LetsConnect AI Assistant")
 

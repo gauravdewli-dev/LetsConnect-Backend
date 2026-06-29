@@ -247,10 +247,10 @@ async def gmail_oauth_callback(
         creds = exchange_gmail_code(str(request.url), code_verifier=code_verifier)
         save_gmail_connection(db, user_id, creds)
         return RedirectResponse(f"{settings.frontend_url}/success?provider=gmail&connected=1")
-    except Exception as exc:
-        logger.exception("Gmail OAuth callback failed: %s", exc)
+    except Exception:
+        logger.exception("Gmail OAuth callback failed")
         return RedirectResponse(
-            f"{settings.frontend_url}/success?provider=gmail&error={quote(str(exc))}"
+            f"{settings.frontend_url}/success?provider=gmail&error={quote('Gmail connection failed')}"
         )
 
 
@@ -325,10 +325,10 @@ async def slack_oauth_callback(
         )
         background_tasks.add_task(onboard_slack_user, bot_token, slack_user_id)
         return RedirectResponse(f"{settings.frontend_url}/success?provider=slack&connected=1")
-    except Exception as exc:
-        logger.exception("Slack OAuth callback failed: %s", exc)
+    except Exception:
+        logger.exception("Slack OAuth callback failed")
         return RedirectResponse(
-            f"{settings.frontend_url}/success?provider=slack&error={quote(str(exc))}"
+            f"{settings.frontend_url}/success?provider=slack&error={quote('Slack connection failed')}"
         )
 
 
@@ -368,8 +368,8 @@ async def jira_oauth_callback(
         user_id = int(payload["sub"])
         await connect_jira_from_code(db, user_id, code)
         return RedirectResponse(f"{settings.frontend_url}/success?provider=jira&connected=1")
-    except Exception as exc:
-        logger.exception("Jira OAuth callback failed: %s", exc)
+    except Exception:
+        logger.exception("Jira OAuth callback failed")
         return RedirectResponse(
-            f"{settings.frontend_url}/success?provider=jira&error={quote(str(exc))}"
+            f"{settings.frontend_url}/success?provider=jira&error={quote('Jira connection failed')}"
         )
