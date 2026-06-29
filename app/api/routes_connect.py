@@ -1,7 +1,6 @@
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 
 import logging
-import secrets
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -10,25 +9,22 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.configs.database.db import get_db
-from app.constants import SLACK_BOT_SCOPES, SLACK_USER_SCOPES
+from app.service.integration_connect import (
+    build_gmail_connect_url,
+    build_jira_connect_url,
+    build_slack_connect_url,
+)
 from app.schema.users import User
 from app.security import (
-    create_oauth_state_token,
     decode_token,
     get_current_user,
     get_user_from_query_token,
 )
-from app.service.chat_service import (
-    clear_slack_channel_for_user,
-    get_messages_page,
-    get_or_create_primary_conversation,
-    handle_chat_message,
-)
+from app.service.chat_service import clear_user_chat_history, get_messages_page, get_or_create_primary_conversation, handle_chat_message
+from app.service.slack_disconnect import uninstall_slack_from_workspace
 from app.service.slack_onboarding import onboard_slack_user
 from app.service.gmail_tokens import (
-    create_gmail_flow,
     delete_gmail_connection,
-    delete_slack_connection,
     exchange_gmail_code,
     get_gmail_connection,
     get_slack_connection_by_user,
@@ -42,13 +38,13 @@ from app.service.jira_tokens import (
     connect_jira_from_code,
     delete_jira_connection,
     get_jira_connection,
-    jira_authorize_url,
     sync_jira_user_profile,
 )
 from app.types import (
     ChatHistoryResponse,
     ChatRequest,
     ChatResponse,
+    ConnectUrlResponse,
     ConnectionStatusResponse,
     MessageResponse,
     StoredChatMessage,
@@ -123,9 +119,13 @@ def disconnect_gmail(user: User = Depends(get_current_user), db: Session = Depen
 
 @router.delete("/api/slack", response_model=ConnectionStatusResponse)
 def disconnect_slack(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not delete_slack_connection(db, user.id):
+    conn = get_slack_connection_by_user(db, user.id)
+    if not conn:
         raise HTTPException(status_code=404, detail="Slack not connected")
-    clear_slack_channel_for_user(db, user.id)
+    uninstall_slack_from_workspace(conn)
+    db.delete(conn)
+    db.commit()
+    clear_user_chat_history(db, user.id)
     return _build_connection_status(db, user.id)
 
 
@@ -191,19 +191,33 @@ def chat(
     )
 
 
+@router.get("/api/integrations/gmail/connect-url", response_model=ConnectUrlResponse)
+def gmail_connect_url(user: User = Depends(get_current_user)):
+    return ConnectUrlResponse(url=build_gmail_connect_url(user.id))
+
+
+@router.get("/api/integrations/slack/connect-url", response_model=ConnectUrlResponse)
+def slack_connect_url(user: User = Depends(get_current_user)):
+    try:
+        url = build_slack_connect_url(user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ConnectUrlResponse(url=url)
+
+
+@router.get("/api/integrations/jira/connect-url", response_model=ConnectUrlResponse)
+def jira_connect_url(user: User = Depends(get_current_user)):
+    try:
+        url = build_jira_connect_url(user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ConnectUrlResponse(url=url)
+
+
 @router.get("/gmail/connect")
 def gmail_connect(token: str = Query(...), db: Session = Depends(get_db)):
     user = get_user_from_query_token(token, db)
-    flow = create_gmail_flow()
-    flow.code_verifier = secrets.token_urlsafe(64)
-    state = create_oauth_state_token(user.id, "gmail", code_verifier=flow.code_verifier)
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",
-        state=state,
-    )
-    return RedirectResponse(auth_url)
+    return RedirectResponse(build_gmail_connect_url(user.id))
 
 
 @router.get("/oauth/callback")
@@ -242,19 +256,12 @@ async def gmail_oauth_callback(
 
 @router.get("/slack/install")
 def slack_install(token: str = Query(...), db: Session = Depends(get_db)):
-    settings = get_settings()
-    if not settings.slack_client_id:
-        raise HTTPException(status_code=503, detail="Slack not configured")
     user = get_user_from_query_token(token, db)
-    state = create_oauth_state_token(user.id, "slack")
-    params = urlencode({
-        "client_id": settings.slack_client_id,
-        "scope": SLACK_BOT_SCOPES,
-        "user_scope": SLACK_USER_SCOPES,
-        "redirect_uri": settings.slack_oauth_callback_uri,
-        "state": state,
-    })
-    return RedirectResponse(f"https://slack.com/oauth/v2/authorize?{params}")
+    try:
+        url = build_slack_connect_url(user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return RedirectResponse(url)
 
 
 @router.get("/slack/oauth/callback")
@@ -327,14 +334,16 @@ async def slack_oauth_callback(
 
 @router.get("/jira/connect")
 def jira_connect(token: str = Query(...), db: Session = Depends(get_db)):
+    user = get_user_from_query_token(token, db)
     settings = get_settings()
     if not settings.jira_client_id:
         raise HTTPException(status_code=503, detail="Jira not configured")
-    user = get_user_from_query_token(token, db)
-    state = create_oauth_state_token(user.id, "jira")
-    redirect_uri = settings.jira_oauth_callback_uri
-    logger.info("Jira OAuth redirect_uri=%s", redirect_uri)
-    return RedirectResponse(jira_authorize_url(state))
+    logger.info("Jira OAuth redirect_uri=%s", settings.jira_oauth_callback_uri)
+    try:
+        url = build_jira_connect_url(user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return RedirectResponse(url)
 
 
 @router.get("/jira/oauth/callback")

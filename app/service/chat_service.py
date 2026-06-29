@@ -79,6 +79,23 @@ def append_message(
     return doc["_id"]
 
 
+def clear_user_chat_history(db: Session, user_id: int) -> None:
+    """Delete all conversations and Mongo messages for a user (e.g. on Slack disconnect)."""
+    convs = db.query(Conversation).filter(Conversation.user_id == user_id).all()
+    conv_ids = [c.id for c in convs]
+
+    if conv_ids:
+        get_messages_collection().delete_many(
+            {"user_id": user_id, "conversation_id": {"$in": conv_ids}}
+        )
+    else:
+        get_messages_collection().delete_many({"user_id": user_id})
+
+    for conv in convs:
+        db.delete(conv)
+    db.commit()
+
+
 def clear_slack_channel_for_user(db: Session, user_id: int) -> None:
     db.query(Conversation).filter(
         Conversation.user_id == user_id,

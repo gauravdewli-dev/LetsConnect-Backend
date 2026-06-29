@@ -151,3 +151,7 @@ class ChatHistoryResponse(BaseModel):
     conversation_id: str
     messages: list[StoredChatMessage]
     next_cursor: str | None = None
+
+
+class ConnectUrlResponse(BaseModel):
+    url: str
