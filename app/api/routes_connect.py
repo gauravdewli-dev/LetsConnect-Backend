@@ -28,10 +28,12 @@ from app.service.gmail_tokens import (
     exchange_gmail_code,
     get_gmail_connection,
     get_slack_connection_by_user,
+    has_calendar_access,
     save_gmail_connection,
     save_slack_connection,
     slack_has_user_token,
     sync_gmail_display_name,
+    sync_google_scopes,
     sync_slack_profile,
 )
 from app.service.jira_tokens import (
@@ -71,6 +73,7 @@ def _build_connection_status(db: Session, user_id: int) -> ConnectionStatusRespo
         gmail_connected=gmail is not None,
         gmail_email=gmail.gmail_email if gmail else None,
         gmail_display_name=gmail.gmail_display_name if gmail else None,
+        calendar_connected=gmail is not None and has_calendar_access(gmail),
         slack_connected=slack is not None,
         slack_configured=bool(settings.slack_client_id and settings.slack_signing_secret),
         slack_send_as_user=slack is not None and slack_has_user_token(slack),
@@ -102,6 +105,8 @@ def backfill_connection_profiles(user: User = Depends(get_current_user), db: Ses
 
     if gmail and not gmail.gmail_display_name:
         sync_gmail_display_name(db, gmail)
+    if gmail:
+        sync_google_scopes(db, gmail)
     if slack and not slack.slack_display_name:
         sync_slack_profile(db, slack)
     if jira and not jira.jira_display_name:

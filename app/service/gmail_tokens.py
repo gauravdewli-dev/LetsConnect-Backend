@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse, urlencode
 
 import httpx
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -13,7 +14,94 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.schema.connections import GmailConnection, SlackConnection
 from app.security import decrypt_token, encrypt_token
-from app.service.gmail import GMAIL_SCOPES, GmailClient
+from app.service.calendar import CalendarClient
+from app.service.calendar.constants import CALENDAR_SCOPES
+from app.service.gmail import GMAIL_SCOPES, GOOGLE_SCOPES, GmailClient
+
+
+def _scopes_from_connection(conn: GmailConnection) -> list[str]:
+    if conn.granted_scopes:
+        return [scope for scope in conn.granted_scopes.split(" ") if scope]
+    return list(GMAIL_SCOPES)
+
+
+def _fetch_token_scopes(access_token: str) -> list[str]:
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"access_token": access_token},
+            )
+        if response.status_code >= 400:
+            return []
+        scope_str = response.json().get("scope", "")
+        return [scope for scope in scope_str.split(" ") if scope]
+    except httpx.HTTPError:
+        return []
+
+
+def _resolve_granted_scopes(creds: Credentials) -> list[str]:
+    if creds.token:
+        live_scopes = _fetch_token_scopes(creds.token)
+        if live_scopes:
+            return live_scopes
+    if creds.scopes:
+        return list(creds.scopes)
+    return list(GMAIL_SCOPES)
+
+
+def _sync_granted_scopes(db: Session, conn: GmailConnection, creds: Credentials) -> list[str]:
+    scopes = _resolve_granted_scopes(creds)
+    persisted = " ".join(scopes)
+    if conn.granted_scopes != persisted:
+        conn.granted_scopes = persisted
+        db.commit()
+    return scopes
+
+
+def has_calendar_access(conn: GmailConnection, *, creds: Credentials | None = None) -> bool:
+    scopes = _resolve_granted_scopes(creds) if creds else _scopes_from_connection(conn)
+    return any(scope in scopes for scope in CALENDAR_SCOPES)
+
+
+def sync_google_scopes(db: Session, conn: GmailConnection) -> None:
+    try:
+        creds = _credentials_from_connection(conn)
+        if not creds.valid and creds.expired and creds.refresh_token:
+            creds = _refresh_credentials(db, conn, creds)
+        if creds.token:
+            _sync_granted_scopes(db, conn, creds)
+    except (ValueError, RefreshError):
+        return
+
+
+def get_google_credentials(db: Session, user_id: int) -> tuple[GmailConnection, Credentials]:
+    conn = get_gmail_connection(db, user_id)
+    if not conn:
+        raise ValueError("Gmail not connected")
+
+    creds = _credentials_from_connection(conn)
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            creds = _refresh_credentials(db, conn, creds)
+        else:
+            raise ValueError("Gmail token expired — please reconnect")
+
+    _sync_granted_scopes(db, conn, creds)
+    return conn, creds
+
+
+def _refresh_credentials(db: Session, conn: GmailConnection, creds: Credentials) -> Credentials:
+    try:
+        creds.refresh(Request())
+    except RefreshError as exc:
+        raise ValueError(
+            "Google token refresh failed — disconnect Gmail and reconnect to refresh permissions."
+        ) from exc
+    conn.access_token_enc = encrypt_token(creds.token) if creds.token else None
+    conn.expires_at = creds.expiry
+    db.commit()
+    return creds
 
 
 def _enable_local_oauth_http() -> None:
@@ -42,7 +130,7 @@ def create_gmail_flow() -> Flow:
     settings = get_settings()
     return Flow.from_client_secrets_file(
         str(_credentials_path()),
-        scopes=GMAIL_SCOPES,
+        scopes=GOOGLE_SCOPES,
         redirect_uri=settings.gmail_oauth_callback_uri,
     )
 
@@ -115,6 +203,7 @@ def save_gmail_connection(db: Session, user_id: int, creds: Credentials) -> Gmai
     conn.refresh_token_enc = encrypt_token(creds.refresh_token or "")
     conn.access_token_enc = encrypt_token(creds.token) if creds.token else None
     conn.expires_at = creds.expiry
+    conn.granted_scopes = " ".join(_resolve_granted_scopes(creds))
     db.commit()
     db.refresh(conn)
     return conn
@@ -128,7 +217,7 @@ def _credentials_from_connection(conn: GmailConnection) -> Credentials:
         token_uri="https://oauth2.googleapis.com/token",
         client_id=client_id,
         client_secret=client_secret,
-        scopes=GMAIL_SCOPES,
+        scopes=_scopes_from_connection(conn),
     )
     if conn.expires_at:
         creds.expiry = conn.expires_at
@@ -149,21 +238,20 @@ def delete_gmail_connection(db: Session, user_id: int) -> bool:
 
 
 def get_gmail_client_for_user(db: Session, user_id: int) -> GmailClient:
-    conn = get_gmail_connection(db, user_id)
-    if not conn:
-        raise ValueError("Gmail not connected")
-
-    creds = _credentials_from_connection(conn)
-    if not creds.valid:
-        if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            conn.access_token_enc = encrypt_token(creds.token) if creds.token else None
-            conn.expires_at = creds.expiry
-            db.commit()
-        else:
-            raise ValueError("Gmail token expired — please reconnect")
-
+    _, creds = get_google_credentials(db, user_id)
     return GmailClient(credentials=creds)
+
+
+def get_calendar_client_for_user(db: Session, user_id: int) -> CalendarClient:
+    conn, creds = get_google_credentials(db, user_id)
+    if not has_calendar_access(conn, creds=creds):
+        raise ValueError(
+            "Google Calendar not connected — disconnect Gmail, revoke LetsConnect at "
+            "https://myaccount.google.com/permissions, then reconnect and allow Calendar "
+            "on the Google consent screen."
+        )
+
+    return CalendarClient(credentials=creds)
 
 
 def sync_gmail_display_name(db: Session, conn: GmailConnection) -> None:
@@ -172,9 +260,7 @@ def sync_gmail_display_name(db: Session, conn: GmailConnection) -> None:
     try:
         creds = _credentials_from_connection(conn)
         if not creds.valid and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            conn.access_token_enc = encrypt_token(creds.token) if creds.token else None
-            conn.expires_at = creds.expiry
+            creds = _refresh_credentials(db, conn, creds)
         if creds.token:
             display_name = _fetch_google_display_name(creds.token)
             if display_name:

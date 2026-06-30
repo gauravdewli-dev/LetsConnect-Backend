@@ -1,6 +1,7 @@
 """Align Postgres schema with LC-Backend SQLAlchemy models."""
 
-from sqlalchemy import inspect, text
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 from app.configs.database.db import Base, engine
 
@@ -17,30 +18,51 @@ _DEPENDENT_TABLES = (
 _LEGACY_TABLES = ("users", "users_legacy")
 
 
-def _table_columns(table_name: str) -> set[str]:
-    inspector = inspect(engine)
-    if table_name not in inspector.get_table_names():
-        return set()
-    return {column["name"] for column in inspector.get_columns(table_name)}
+class _SchemaState:
+    """Cached table/column metadata from a single information_schema query."""
+
+    def __init__(self, db_engine: Engine) -> None:
+        self._table_names: set[str] = set()
+        self._columns: dict[str, set[str]] = {}
+        with db_engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT table_name, column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                    """
+                )
+            )
+            for table_name, column_name in rows:
+                self._table_names.add(table_name)
+                self._columns.setdefault(table_name, set()).add(column_name)
+
+    @property
+    def table_names(self) -> set[str]:
+        return self._table_names
+
+    def columns(self, table_name: str) -> set[str]:
+        return self._columns.get(table_name, set())
 
 
-def _users_schema_ok() -> bool:
-    return _REQUIRED_USER_COLUMNS.issubset(_table_columns("users"))
+def _users_schema_ok(state: _SchemaState) -> bool:
+    return _REQUIRED_USER_COLUMNS.issubset(state.columns("users"))
 
 
-def _ensure_slack_user_token_column() -> None:
-    if "slack_connections" not in inspect(engine).get_table_names():
+def _ensure_slack_user_token_column(state: _SchemaState) -> None:
+    if "slack_connections" not in state.table_names:
         return
-    if "user_token_enc" in _table_columns("slack_connections"):
+    if "user_token_enc" in state.columns("slack_connections"):
         return
     with engine.begin() as conn:
-        conn.execute(text('ALTER TABLE slack_connections ADD COLUMN user_token_enc VARCHAR NULL'))
+        conn.execute(text("ALTER TABLE slack_connections ADD COLUMN user_token_enc VARCHAR NULL"))
 
 
-def _ensure_email_verified_column() -> None:
-    if "users" not in inspect(engine).get_table_names():
+def _ensure_email_verified_column(state: _SchemaState) -> None:
+    if "users" not in state.table_names:
         return
-    if "email_verified" in _table_columns("users"):
+    if "email_verified" in state.columns("users"):
         return
     with engine.begin() as conn:
         conn.execute(
@@ -48,10 +70,10 @@ def _ensure_email_verified_column() -> None:
         )
 
 
-def _ensure_otp_purpose_column() -> None:
-    if "password_reset_otps" not in inspect(engine).get_table_names():
+def _ensure_otp_purpose_column(state: _SchemaState) -> None:
+    if "password_reset_otps" not in state.table_names:
         return
-    if "purpose" in _table_columns("password_reset_otps"):
+    if "purpose" in state.columns("password_reset_otps"):
         return
     with engine.begin() as conn:
         conn.execute(
@@ -62,10 +84,10 @@ def _ensure_otp_purpose_column() -> None:
         )
 
 
-def _ensure_jira_user_columns() -> None:
-    if "jira_connections" not in inspect(engine).get_table_names():
+def _ensure_jira_user_columns(state: _SchemaState) -> None:
+    if "jira_connections" not in state.table_names:
         return
-    columns = _table_columns("jira_connections")
+    columns = state.columns("jira_connections")
     additions = {
         "jira_account_id": "VARCHAR NULL",
         "jira_display_name": "VARCHAR NULL",
@@ -77,32 +99,42 @@ def _ensure_jira_user_columns() -> None:
                 conn.execute(text(f"ALTER TABLE jira_connections ADD COLUMN {column} {ddl}"))
 
 
-def _ensure_connection_identity_columns() -> None:
+def _ensure_connection_identity_columns(state: _SchemaState) -> None:
     with engine.begin() as conn:
-        if "gmail_connections" in inspect(engine).get_table_names():
-            columns = _table_columns("gmail_connections")
+        if "gmail_connections" in state.table_names:
+            columns = state.columns("gmail_connections")
             if "gmail_display_name" not in columns:
-                conn.execute(text("ALTER TABLE gmail_connections ADD COLUMN gmail_display_name VARCHAR NULL"))
-        if "slack_connections" in inspect(engine).get_table_names():
-            columns = _table_columns("slack_connections")
+                conn.execute(
+                    text("ALTER TABLE gmail_connections ADD COLUMN gmail_display_name VARCHAR NULL")
+                )
+            if "granted_scopes" not in columns:
+                conn.execute(
+                    text("ALTER TABLE gmail_connections ADD COLUMN granted_scopes VARCHAR NULL")
+                )
+        if "slack_connections" in state.table_names:
+            columns = state.columns("slack_connections")
             if "slack_display_name" not in columns:
-                conn.execute(text("ALTER TABLE slack_connections ADD COLUMN slack_display_name VARCHAR NULL"))
+                conn.execute(
+                    text("ALTER TABLE slack_connections ADD COLUMN slack_display_name VARCHAR NULL")
+                )
             if "slack_team_name" not in columns:
-                conn.execute(text("ALTER TABLE slack_connections ADD COLUMN slack_team_name VARCHAR NULL"))
+                conn.execute(
+                    text("ALTER TABLE slack_connections ADD COLUMN slack_team_name VARCHAR NULL")
+                )
 
 
 def ensure_schema() -> None:
-    if _users_schema_ok():
+    state = _SchemaState(engine)
+    if _users_schema_ok(state):
         Base.metadata.create_all(bind=engine)
-        _ensure_slack_user_token_column()
-        _ensure_email_verified_column()
-        _ensure_otp_purpose_column()
-        _ensure_jira_user_columns()
-        _ensure_connection_identity_columns()
+        _ensure_slack_user_token_column(state)
+        _ensure_email_verified_column(state)
+        _ensure_otp_purpose_column(state)
+        _ensure_jira_user_columns(state)
+        _ensure_connection_identity_columns(state)
         return
 
     # Wrong or partial schema (often from another app sharing the same Neon DB).
-    # Drop legacy auth tables; index names like `ix_users_id` are global in Postgres.
     with engine.begin() as conn:
         for table_name in _DEPENDENT_TABLES:
             conn.execute(text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))

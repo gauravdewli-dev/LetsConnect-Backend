@@ -10,7 +10,6 @@ from app.configs.mongodb.client import (
     get_messages_collection,
 )
 from app.schema.conversations import Conversation
-from app.service.letsconnect_agent import run_agent
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +184,8 @@ def handle_chat_message(
         conv.slack_channel_id = slack_channel_id
 
     history = get_agent_history(conv.id, user_id, limit=AGENT_HISTORY_LIMIT)
+    from app.service.letsconnect_agent import run_agent
+
     result = run_agent(db, user_id, message, history=history or None)
     reply = result["reply"]
     tools_used = result.get("tools_used", [])

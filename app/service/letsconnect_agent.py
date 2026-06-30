@@ -8,15 +8,19 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.service.gmail_tokens import (
+    get_calendar_client_for_user,
     get_gmail_client_for_user,
     get_gmail_connection,
+    get_google_credentials,
     get_slack_bot_token,
     get_slack_connection_by_user,
     get_slack_user_token,
+    has_calendar_access,
 )
 from app.service.jira_tokens import get_jira_connection, get_jira_tools_for_user
 from app.service.jira_tools import JiraTools
 from app.service.slack_tools import SlackTools
+from app.service.calendar import CalendarClient
 from app.service.gmail import GmailClient
 
 GMAIL_TOOL_DEFINITIONS = [
@@ -97,6 +101,117 @@ GMAIL_TOOL_DEFINITIONS = [
                 "body": {"type": "string", "description": "Plain text body"},
             },
             "required": ["to", "subject", "body"],
+        },
+    },
+]
+
+CALENDAR_TOOL_DEFINITIONS = [
+    {
+        "name": "calendar_list_events",
+        "description": (
+            "List upcoming Google Calendar events for the user. "
+            "Use before scheduling to check availability or answer 'what's on my calendar'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "time_min": {
+                    "type": "string",
+                    "description": "ISO 8601 start of range (default: now)",
+                },
+                "time_max": {
+                    "type": "string",
+                    "description": "ISO 8601 end of range (optional)",
+                },
+                "on_date": {
+                    "type": "string",
+                    "description": "Calendar day YYYY-MM-DD (e.g. today). Preferred for 'meetings today'.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Free-text search (title, attendees, etc.)",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Max events (1-50, default 10)",
+                },
+            },
+        },
+    },
+    {
+        "name": "calendar_get_event",
+        "description": "Get full details for a calendar event by ID.",
+        "parameters": {
+            "type": "object",
+            "properties": {"event_id": {"type": "string"}},
+            "required": ["event_id"],
+        },
+    },
+    {
+        "name": "calendar_create_event",
+        "description": (
+            "Create a Google Calendar event and optionally invite attendees. "
+            "Sends calendar invites when attendees are included. "
+            "Set add_google_meet=true to add a Google Meet video link."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string", "description": "Event title"},
+                "start": {"type": "string", "description": "Start time ISO 8601 or YYYY-MM-DD for all-day"},
+                "end": {"type": "string", "description": "End time ISO 8601 or YYYY-MM-DD for all-day"},
+                "description": {"type": "string"},
+                "location": {"type": "string"},
+                "attendees": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Attendee email addresses",
+                },
+                "timezone": {
+                    "type": "string",
+                    "description": "IANA timezone, e.g. America/New_York (default: user's calendar timezone)",
+                },
+                "all_day": {"type": "boolean", "description": "All-day event (default false)"},
+                "add_google_meet": {
+                    "type": "boolean",
+                    "description": "Add a Google Meet link (default false)",
+                },
+            },
+            "required": ["summary", "start", "end"],
+        },
+    },
+    {
+        "name": "calendar_update_event",
+        "description": "Update an existing calendar event. Sends updates to attendees when changed.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "event_id": {"type": "string"},
+                "summary": {"type": "string"},
+                "start": {"type": "string"},
+                "end": {"type": "string"},
+                "description": {"type": "string"},
+                "location": {"type": "string"},
+                "attendees": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Replace attendee list with these emails",
+                },
+                "timezone": {"type": "string"},
+                "all_day": {"type": "boolean"},
+            },
+            "required": ["event_id"],
+        },
+    },
+    {
+        "name": "calendar_delete_event",
+        "description": (
+            "Delete a calendar event permanently. ALWAYS confirm with the user before calling."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"event_id": {"type": "string"}},
+            "required": ["event_id"],
         },
     },
 ]
@@ -293,11 +408,12 @@ JIRA_TOOL_DEFINITIONS = [
 MAX_TOOL_ROUNDS = 8
 
 GMAIL_TOOL_NAMES = {t["name"] for t in GMAIL_TOOL_DEFINITIONS}
+CALENDAR_TOOL_NAMES = {t["name"] for t in CALENDAR_TOOL_DEFINITIONS}
 SLACK_TOOL_NAMES = {t["name"] for t in SLACK_TOOL_DEFINITIONS}
 JIRA_TOOL_NAMES = {t["name"] for t in JIRA_TOOL_DEFINITIONS}
 
 
-def _system_prompt(has_gmail: bool, has_slack: bool, has_jira: bool) -> str:
+def _system_prompt(has_gmail: bool, has_calendar: bool, has_slack: bool, has_jira: bool) -> str:
     parts = [
         "You are LetsConnect, a helpful AI assistant connected to the user's work tools.",
         "Keep replies concise and readable (short paragraphs, bullet lists when helpful).",
@@ -323,6 +439,20 @@ def _system_prompt(has_gmail: bool, has_slack: bool, has_jira: bool) -> str:
             "(unless the user asked to send in one step). "
             "If the user wants to keep editing in Gmail or save for later instead of sending, use "
             "create_draft to save it in their Gmail Drafts folder, then tell them it's saved as a draft."
+        )
+    if has_calendar:
+        parts.append(
+            "Google Calendar tools: schedule and manage meetings on the user's primary calendar. "
+            "Use calendar_list_events to see what's coming up or check for conflicts before booking. "
+            "For scheduling, show the proposed title, date/time, attendees, and whether a Meet link "
+            "will be added — then ask for confirmation before calling calendar_create_event "
+            "(unless the user asked to schedule in one step). "
+            "Use ISO 8601 datetimes with the user's timezone when possible; call calendar_list_events "
+            "first if you need their calendar timezone from the response. "
+            "When the user wants a video call, set add_google_meet=true. "
+            "Include the html_link and meet_link in your reply after creating an event. "
+            "For calendar_update_event, confirm changes first unless the user asked to update immediately. "
+            "For calendar_delete_event, ALWAYS get explicit confirmation — deletion is permanent."
         )
     if has_slack:
         parts.append(
@@ -358,6 +488,7 @@ def _run_tool(
     args: dict[str, Any],
     *,
     gmail: GmailClient | None,
+    calendar: CalendarClient | None,
     slack: SlackTools | None,
     jira: JiraTools | None,
 ) -> Any:
@@ -380,6 +511,46 @@ def _run_tool(
             return gmail.create_draft(args["to"], args["subject"], args["body"])
         if name == "send_email":
             return gmail.send_email(args["to"], args["subject"], args["body"])
+
+    if name in CALENDAR_TOOL_NAMES:
+        if not calendar:
+            raise ValueError("Google Calendar not connected — reconnect Gmail to grant calendar access")
+        if name == "calendar_list_events":
+            return calendar.list_events(
+                time_min=args.get("time_min"),
+                time_max=args.get("time_max"),
+                on_date=args.get("on_date"),
+                max_results=args.get("max_results", 10),
+                query=args.get("query"),
+            )
+        if name == "calendar_get_event":
+            return calendar.get_event(args["event_id"])
+        if name == "calendar_create_event":
+            return calendar.create_event(
+                args["summary"],
+                args["start"],
+                args["end"],
+                description=args.get("description"),
+                location=args.get("location"),
+                attendees=args.get("attendees"),
+                timezone_name=args.get("timezone"),
+                all_day=args.get("all_day", False),
+                add_google_meet=args.get("add_google_meet", False),
+            )
+        if name == "calendar_update_event":
+            return calendar.update_event(
+                args["event_id"],
+                summary=args.get("summary"),
+                start=args.get("start"),
+                end=args.get("end"),
+                description=args.get("description"),
+                location=args.get("location"),
+                attendees=args.get("attendees"),
+                timezone_name=args.get("timezone"),
+                all_day=args.get("all_day", False),
+            )
+        if name == "calendar_delete_event":
+            return calendar.delete_event(args["event_id"])
 
     if name in SLACK_TOOL_NAMES:
         if not slack:
@@ -447,6 +618,20 @@ def _gemini_config(tool_definitions: list[dict[str, Any]], system_instruction: s
 
 def _extract_reply(parts: list[types.Part]) -> str:
     return "".join(part.text for part in parts if part.text)
+
+
+def _gemini_finish_reason(candidate: Any) -> str | None:
+    reason = getattr(candidate, "finish_reason", None)
+    if reason is None:
+        return None
+    return str(getattr(reason, "name", reason))
+
+
+def _empty_candidate_message(candidate: Any) -> str:
+    reason = _gemini_finish_reason(candidate)
+    if reason and reason not in {"STOP", "FinishReason.STOP"}:
+        return f"Gemini blocked the response ({reason}). Try rephrasing your question."
+    return "Gemini returned an empty response. Please try again."
 
 
 def _build_contents(
@@ -519,7 +704,18 @@ def run_agent(
     if not gmail_conn and not slack_conn and not jira_conn:
         raise ValueError("Connect Gmail, Slack, or Jira in the dashboard first")
 
-    gmail = get_gmail_client_for_user(db, user_id) if gmail_conn else None
+    google_creds = None
+    gmail = None
+    calendar = None
+    if gmail_conn:
+        try:
+            gmail_conn, google_creds = get_google_credentials(db, user_id)
+            gmail = GmailClient(credentials=google_creds)
+            if has_calendar_access(gmail_conn, creds=google_creds):
+                calendar = CalendarClient(credentials=google_creds)
+        except ValueError:
+            gmail = None
+            calendar = None
     slack = (
         SlackTools(
             get_slack_bot_token(slack_conn),
@@ -534,12 +730,21 @@ def run_agent(
     tool_definitions: list[dict[str, Any]] = []
     if gmail:
         tool_definitions.extend(GMAIL_TOOL_DEFINITIONS)
+    if calendar:
+        tool_definitions.extend(CALENDAR_TOOL_DEFINITIONS)
     if slack:
         tool_definitions.extend(SLACK_TOOL_DEFINITIONS)
     if jira:
         tool_definitions.extend(JIRA_TOOL_DEFINITIONS)
 
-    system_instruction = _system_prompt(bool(gmail), bool(slack), bool(jira))
+    system_instruction = _system_prompt(bool(gmail), bool(calendar), bool(slack), bool(jira))
+    if gmail_conn and google_creds and not has_calendar_access(gmail_conn, creds=google_creds):
+        system_instruction += (
+            " Google Calendar is NOT connected yet — if the user asks about meetings or scheduling, "
+            "tell them to: (1) disconnect Gmail in the dashboard, (2) revoke LetsConnect at "
+            "https://myaccount.google.com/permissions, (3) reconnect Gmail and allow the Calendar "
+            "permission on the Google consent screen. Do NOT call calendar tools."
+        )
     if jira_conn and jira_conn.jira_display_name:
         system_instruction += (
             f" The connected Jira user is {jira_conn.jira_display_name!r} — "
@@ -556,6 +761,7 @@ def run_agent(
     )
 
     contents: list[types.Content] = _build_contents(message, history)
+    empty_retries = 0
 
     for _ in range(MAX_TOOL_ROUNDS):
         try:
@@ -578,7 +784,16 @@ def run_agent(
         candidate = response.candidates[0]
         model_content = candidate.content
         if not model_content or not model_content.parts:
-            raise ValueError("Gemini returned empty content")
+            if empty_retries < 1:
+                empty_retries += 1
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text="Please answer in plain text.")],
+                    )
+                )
+                continue
+            raise ValueError(_empty_candidate_message(candidate))
 
         function_calls = [part for part in model_content.parts if part.function_call]
         if function_calls:
@@ -594,8 +809,8 @@ def run_agent(
                 args = dict(function_call.args) if function_call.args else {}
                 tools_used.append(name)
                 try:
-                    result = _run_tool(name, args, gmail=gmail, slack=slack, jira=jira)
-                except (ValueError, RuntimeError) as exc:
+                    result = _run_tool(name, args, gmail=gmail, calendar=calendar, slack=slack, jira=jira)
+                except Exception as exc:
                     result = {"error": str(exc)}
 
                 if name == "slack_send_dm":
@@ -611,6 +826,9 @@ def run_agent(
                         response={"result": json.loads(json.dumps(result, default=str))},
                     )
                 )
+
+            if not tool_response_parts:
+                raise ValueError("Gemini issued invalid tool calls — please try again.")
 
             contents.append(types.Content(role="user", parts=tool_response_parts))
             continue

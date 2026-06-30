@@ -19,7 +19,7 @@ def get_mongo_client() -> MongoClient:
         _client = MongoClient(
             settings.mongodb_uri,
             tlsCAFile=certifi.where(),
-            serverSelectionTimeoutMS=15000,
+            serverSelectionTimeoutMS=5000,
         )
     return _client
 

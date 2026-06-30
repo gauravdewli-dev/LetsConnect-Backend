@@ -107,6 +107,7 @@ class ConnectionStatusResponse(BaseModel):
     gmail_connected: bool
     gmail_email: str | None = None
     gmail_display_name: str | None = None
+    calendar_connected: bool = False
     slack_connected: bool
     slack_configured: bool = False
     slack_send_as_user: bool = False

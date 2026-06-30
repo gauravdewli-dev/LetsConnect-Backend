@@ -26,6 +26,11 @@ class Settings:
         self.backend_url = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
         self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.skip_startup_migrations = os.getenv("SKIP_STARTUP_MIGRATIONS", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         self.gmail_credentials_path = os.getenv("GMAIL_CREDENTIALS_PATH", "./credentials.json")
         self.slack_client_id = os.getenv("SLACK_CLIENT_ID", "")
         self.slack_client_secret = os.getenv("SLACK_CLIENT_SECRET", "")

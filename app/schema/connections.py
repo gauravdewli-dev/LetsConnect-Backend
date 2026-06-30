@@ -17,6 +17,7 @@ class GmailConnection(Base):
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     gmail_email = Column(String, nullable=False)
     gmail_display_name = Column(String, nullable=True)
+    granted_scopes = Column(String, nullable=True)
     refresh_token_enc = Column(String, nullable=False)
     access_token_enc = Column(String, nullable=True)
     expires_at = Column(DateTime, nullable=True)

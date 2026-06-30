@@ -1,6 +1,6 @@
 # LetsConnect — Backend
 
-FastAPI service for authentication, OAuth integrations (Gmail, Slack, Jira), Gemini agent tools, and persistent chat (PostgreSQL + MongoDB).
+FastAPI service for authentication, OAuth integrations (Gmail, Google Calendar, Slack, Jira), Gemini agent tools, and persistent chat (PostgreSQL + MongoDB).
 
 ## Requirements
 
@@ -48,6 +48,7 @@ print(c.admin.command('ping'))
 | `FRONTEND_URL` | No | Default `http://localhost:5173` — CORS + post-OAuth redirects |
 | `GEMINI_API_KEY` | Yes* | Google AI Studio key for the agent |
 | `GEMINI_MODEL` | No | Default `gemini-2.5-flash` |
+| `SKIP_STARTUP_MIGRATIONS` | No | Set `true` in prod after schema is migrated to skip DB reflection on boot |
 | `GMAIL_CREDENTIALS_PATH` | Yes* | Path to Google OAuth `credentials.json` |
 | `SLACK_CLIENT_ID` / `SECRET` / `SIGNING_SECRET` | For Slack | From [api.slack.com/apps](https://api.slack.com/apps) |
 | `SLACK_APP_ID` | No | For “Open in Slack” links in status API |
@@ -162,11 +163,13 @@ Slack DMs use the same `handle_chat_message(..., channel="slack")` path.
 
 ## OAuth setup (summary)
 
-### Gmail
+### Gmail + Google Calendar
 
-1. Google Cloud Console → OAuth client → download `credentials.json`.
-2. Redirect URI: `{BACKEND_URL}/oauth/callback`
-3. Scopes: Gmail read/send (see agent / MCP setup).
+1. Google Cloud Console → enable **Gmail API** and **Google Calendar API**.
+2. OAuth client → download `credentials.json`.
+3. Redirect URI: `{BACKEND_URL}/oauth/callback`
+4. Scopes: Gmail read/send + Calendar events (see `app/service/gmail/constants.py` and `app/service/calendar/constants.py`).
+5. If Gmail was connected before Calendar support was added, disconnect and reconnect to grant calendar access.
 
 ### Slack
 
@@ -207,5 +210,5 @@ Schema migrations run automatically on startup via `configs/database/migrate.py`
 | `Invalid token` on connect | Log in again; use `/api/integrations/*/connect-url` (not stale JWT in URL) |
 | MongoDB SSL error on macOS | `certifi` is included; ensure `MONGODB_URI` password is URL-encoded |
 | Slack bot not replying | Event URL reachable, `SLACK_SIGNING_SECRET` correct, user linked via OAuth |
-| Gmail connect fails | `credentials.json` path, redirect URI matches Google Console |
+| Gmail connect fails | `credentials.json` path, redirect URI matches Google Console, Calendar API enabled |
 | CORS errors | `FRONTEND_URL` matches Vite origin exactly |
