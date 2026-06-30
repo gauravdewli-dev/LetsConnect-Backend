@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.schema.connections import GmailConnection, SlackConnection
 from app.security import decrypt_token, encrypt_token
 from app.service.calendar import CalendarClient
-from app.service.calendar.constants import CALENDAR_SCOPES
+from app.service.calendar.constants import CALENDAR_SCOPES, scope_grants_calendar_access
 from app.service.gmail import GMAIL_SCOPES, GOOGLE_SCOPES, GmailClient
 
 
@@ -61,7 +61,7 @@ def _sync_granted_scopes(db: Session, conn: GmailConnection, creds: Credentials)
 
 def has_calendar_access(conn: GmailConnection, *, creds: Credentials | None = None) -> bool:
     scopes = _resolve_granted_scopes(creds) if creds else _scopes_from_connection(conn)
-    return any(scope in scopes for scope in CALENDAR_SCOPES)
+    return scope_grants_calendar_access(scopes)
 
 
 def sync_google_scopes(db: Session, conn: GmailConnection) -> None:
@@ -152,6 +152,14 @@ def _canonical_callback_url(authorization_response: str) -> str:
     return f"{settings.gmail_oauth_callback_uri}?{urlencode(params)}"
 
 
+def _scopes_from_oauth_response(authorization_response: str) -> list[str]:
+    query_params = parse_qs(urlparse(authorization_response).query)
+    scope_values = query_params.get("scope", [])
+    if not scope_values or not scope_values[0]:
+        return []
+    return [scope for scope in scope_values[0].split(" ") if scope]
+
+
 def exchange_gmail_code(
     authorization_response: str,
     code_verifier: str | None = None,
@@ -183,7 +191,13 @@ def _fetch_google_display_name(access_token: str) -> str | None:
         return None
 
 
-def save_gmail_connection(db: Session, user_id: int, creds: Credentials) -> GmailConnection:
+def save_gmail_connection(
+    db: Session,
+    user_id: int,
+    creds: Credentials,
+    *,
+    oauth_scopes: list[str] | None = None,
+) -> GmailConnection:
     gmail = GmailClient(credentials=creds)
     profile = gmail.get_profile()
     email = profile.get("email", "")
@@ -203,7 +217,10 @@ def save_gmail_connection(db: Session, user_id: int, creds: Credentials) -> Gmai
     conn.refresh_token_enc = encrypt_token(creds.refresh_token or "")
     conn.access_token_enc = encrypt_token(creds.token) if creds.token else None
     conn.expires_at = creds.expiry
-    conn.granted_scopes = " ".join(_resolve_granted_scopes(creds))
+    if oauth_scopes:
+        conn.granted_scopes = " ".join(oauth_scopes)
+    else:
+        conn.granted_scopes = " ".join(_resolve_granted_scopes(creds))
     db.commit()
     db.refresh(conn)
     return conn
@@ -228,10 +245,26 @@ def get_gmail_connection(db: Session, user_id: int) -> GmailConnection | None:
     return db.query(GmailConnection).filter(GmailConnection.user_id == user_id).first()
 
 
+def _revoke_google_token(token: str) -> None:
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            client.post(
+                "https://oauth2.googleapis.com/revoke",
+                params={"token": token},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+    except httpx.HTTPError:
+        return
+
+
 def delete_gmail_connection(db: Session, user_id: int) -> bool:
     conn = get_gmail_connection(db, user_id)
     if not conn:
         return False
+    try:
+        _revoke_google_token(decrypt_token(conn.refresh_token_enc))
+    except ValueError:
+        pass
     db.delete(conn)
     db.commit()
     return True

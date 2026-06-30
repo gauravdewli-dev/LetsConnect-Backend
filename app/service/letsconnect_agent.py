@@ -1,12 +1,11 @@
 import json
 from typing import Any
 
-from google import genai
 from google.genai import types
-from google.genai.errors import ClientError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.service.gemini_keys import GeminiKeyPool, generate_content as gemini_generate_content
 from app.service.gmail_tokens import (
     get_calendar_client_for_user,
     get_gmail_client_for_user,
@@ -695,7 +694,7 @@ def run_agent(
     history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
-    if not settings.gemini_api_key:
+    if not settings.gemini_api_keys:
         raise ValueError("GEMINI_API_KEY is not set")
 
     gmail_conn = get_gmail_connection(db, user_id)
@@ -741,9 +740,9 @@ def run_agent(
     if gmail_conn and google_creds and not has_calendar_access(gmail_conn, creds=google_creds):
         system_instruction += (
             " Google Calendar is NOT connected yet — if the user asks about meetings or scheduling, "
-            "tell them to: (1) disconnect Gmail in the dashboard, (2) revoke LetsConnect at "
-            "https://myaccount.google.com/permissions, (3) reconnect Gmail and allow the Calendar "
-            "permission on the Google consent screen. Do NOT call calendar tools."
+            "tell them to click Gmail on the dashboard integration graph (or 'Enable Google Calendar') "
+            "to reconnect, then allow the Calendar permission on the Google consent screen. "
+            "Do NOT call calendar tools."
         )
     if jira_conn and jira_conn.jira_display_name:
         system_instruction += (
@@ -751,7 +750,7 @@ def run_agent(
             "'my tickets' means issues assigned to this user."
         )
 
-    client = genai.Client(api_key=settings.gemini_api_key)
+    gemini_pool = GeminiKeyPool(settings.gemini_api_keys)
     tools_used: list[str] = []
     slack_dm_result: dict[str, Any] | None = None
     slack_dm_error: str | None = None
@@ -765,18 +764,14 @@ def run_agent(
 
     for _ in range(MAX_TOOL_ROUNDS):
         try:
-            response = client.models.generate_content(
+            response = gemini_generate_content(
+                gemini_pool,
                 model=settings.gemini_model,
                 contents=contents,
                 config=config,
             )
-        except ClientError as exc:
-            if exc.code == 429:
-                raise ValueError(
-                    "Gemini rate limit reached — wait a minute and try again, "
-                    "or switch GEMINI_MODEL in .env (e.g. gemini-2.5-flash)."
-                ) from exc
-            raise ValueError(f"Gemini API error: {exc}") from exc
+        except ValueError:
+            raise
 
         if not response.candidates:
             raise ValueError("Gemini returned no response")

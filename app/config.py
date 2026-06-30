@@ -24,7 +24,8 @@ class Settings:
         self.encryption_key = os.getenv("ENCRYPTION_KEY", "")
         self.frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
         self.backend_url = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
-        self.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+        self.gemini_api_keys = self._collect_gemini_api_keys()
+        self.gemini_api_key = self.gemini_api_keys[0] if self.gemini_api_keys else ""
         self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.skip_startup_migrations = os.getenv("SKIP_STARTUP_MIGRATIONS", "").strip().lower() in {
             "1",
@@ -53,6 +54,21 @@ class Settings:
         self.smtp_user = os.getenv("SMTP_USER", "").strip()
         self.smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
         self._validate_secrets()
+
+    def _collect_gemini_api_keys(self) -> list[str]:
+        keys: list[str] = []
+        seen: set[str] = set()
+        for env_name in (
+            "GEMINI_API_KEY",
+            "GEMINI_API_KEY_ONE",
+            "GEMINI_API_KEY_TWO",
+            "GEMINI_API_KEY_THREE",
+        ):
+            value = os.getenv(env_name, "").strip()
+            if value and value not in seen:
+                seen.add(value)
+                keys.append(value)
+        return keys
 
     @property
     def is_production(self) -> bool:

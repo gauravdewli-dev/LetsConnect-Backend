@@ -1,5 +1,4 @@
 import logging
-import re
 
 # Paths whose query strings must never appear in access logs (OAuth codes, tokens, state).
 _SENSITIVE_PATH_LABELS: dict[str, str] = {
@@ -11,35 +10,32 @@ _SENSITIVE_PATH_LABELS: dict[str, str] = {
     "/jira/connect": "Jira OAuth connect initiated",
 }
 
-_PATH_PATTERN = "|".join(re.escape(path) for path in _SENSITIVE_PATH_LABELS)
-_ACCESS_LOG_RE = re.compile(
-    rf'"([A-Z]+)\s+({_PATH_PATTERN})(?:\?[^"]*)?\s+HTTP/[\d.]+"'
-)
-
-
-def _redact_access_log_message(message: str) -> str:
-    def _replace(match: re.Match[str]) -> str:
-        method = match.group(1)
-        path = match.group(2)
-        label = _SENSITIVE_PATH_LABELS[path]
-        return f'"{method} {path} — {label} HTTP/1.1"'
-
-    return _ACCESS_LOG_RE.sub(_replace, message)
-
 
 class SanitizeAccessLogFilter(logging.Filter):
-    """Strip OAuth codes, state, and tokens from uvicorn access log lines."""
+    """Strip OAuth query strings from uvicorn access logs without breaking its formatter."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        try:
-            message = record.getMessage()
-        except Exception:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) != 5:
             return True
 
-        redacted = _redact_access_log_message(message)
-        if redacted != message:
-            record.msg = redacted
-            record.args = ()
+        full_path = args[2]
+        if not isinstance(full_path, str):
+            return True
+
+        path = full_path.split("?", 1)[0]
+        label = _SENSITIVE_PATH_LABELS.get(path)
+        if not label:
+            return True
+
+        # Uvicorn AccessFormatter expects exactly 5 args — only replace the path segment.
+        record.args = (
+            args[0],
+            args[1],
+            f"{path} — {label}",
+            args[3],
+            args[4],
+        )
         return True
 
 

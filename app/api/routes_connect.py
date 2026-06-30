@@ -27,6 +27,7 @@ from app.service.gmail_tokens import (
     delete_gmail_connection,
     exchange_gmail_code,
     get_gmail_connection,
+    get_google_credentials,
     get_slack_connection_by_user,
     has_calendar_access,
     save_gmail_connection,
@@ -35,6 +36,7 @@ from app.service.gmail_tokens import (
     sync_gmail_display_name,
     sync_google_scopes,
     sync_slack_profile,
+    _scopes_from_oauth_response,
 )
 from app.service.jira_tokens import (
     connect_jira_from_code,
@@ -56,6 +58,22 @@ router = APIRouter(tags=["connect"])
 logger = logging.getLogger(__name__)
 
 
+def _calendar_connected(db: Session, user_id: int, gmail) -> bool:
+    if gmail is None:
+        return False
+    if has_calendar_access(gmail):
+        return True
+    sync_google_scopes(db, gmail)
+    db.refresh(gmail)
+    if has_calendar_access(gmail):
+        return True
+    try:
+        conn, creds = get_google_credentials(db, user_id)
+        return has_calendar_access(conn, creds=creds)
+    except ValueError:
+        return False
+
+
 def _build_connection_status(db: Session, user_id: int) -> ConnectionStatusResponse:
     settings = get_settings()
     gmail = get_gmail_connection(db, user_id)
@@ -73,7 +91,7 @@ def _build_connection_status(db: Session, user_id: int) -> ConnectionStatusRespo
         gmail_connected=gmail is not None,
         gmail_email=gmail.gmail_email if gmail else None,
         gmail_display_name=gmail.gmail_display_name if gmail else None,
-        calendar_connected=gmail is not None and has_calendar_access(gmail),
+        calendar_connected=_calendar_connected(db, user_id, gmail),
         slack_connected=slack is not None,
         slack_configured=bool(settings.slack_client_id and settings.slack_signing_secret),
         slack_send_as_user=slack is not None and slack_has_user_token(slack),
@@ -250,7 +268,13 @@ async def gmail_oauth_callback(
         if not code_verifier or not isinstance(code_verifier, str):
             raise ValueError("Missing PKCE verifier — start Gmail connect again")
         creds = exchange_gmail_code(str(request.url), code_verifier=code_verifier)
-        save_gmail_connection(db, user_id, creds)
+        oauth_scopes = _scopes_from_oauth_response(str(request.url))
+        save_gmail_connection(
+            db,
+            user_id,
+            creds,
+            oauth_scopes=oauth_scopes or None,
+        )
         return RedirectResponse(f"{settings.frontend_url}/success?provider=gmail&connected=1")
     except Exception:
         logger.exception("Gmail OAuth callback failed")

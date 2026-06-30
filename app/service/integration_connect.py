@@ -14,7 +14,6 @@ def build_gmail_connect_url(user_id: int) -> str:
     state = create_oauth_state_token(user_id, "gmail", code_verifier=flow.code_verifier)
     auth_url, _ = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes="true",
         prompt="consent",
         state=state,
     )
