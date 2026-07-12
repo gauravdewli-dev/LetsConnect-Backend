@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from google.genai import types
@@ -108,8 +109,9 @@ CALENDAR_TOOL_DEFINITIONS = [
     {
         "name": "calendar_list_events",
         "description": (
-            "List upcoming Google Calendar events for the user. "
-            "Use before scheduling to check availability or answer 'what's on my calendar'."
+            "List Google Calendar events. Prefer on_date (YYYY-MM-DD) for 'today', 'tomorrow', "
+            "or a specific day. Resolve relative dates yourself from the system clock — never ask "
+            "the user for a calendar date when they already said today/tomorrow/this week."
         ),
         "parameters": {
             "type": "object",
@@ -124,7 +126,9 @@ CALENDAR_TOOL_DEFINITIONS = [
                 },
                 "on_date": {
                     "type": "string",
-                    "description": "Calendar day YYYY-MM-DD (e.g. today). Preferred for 'meetings today'.",
+                    "description": (
+                        "Calendar day YYYY-MM-DD. Use for 'meetings today/tomorrow' or any single day."
+                    ),
                 },
                 "query": {
                     "type": "string",
@@ -243,12 +247,15 @@ SLACK_TOOL_DEFINITIONS = [
     },
     {
         "name": "slack_read_channel",
-        "description": "Read recent messages from a Slack channel or DM by name (e.g. 'room_alerts') or ID.",
+        "description": (
+            "Read recent messages from a Slack channel or DM by name (e.g. 'general', 'eng') or ID. "
+            "Use immediately when the user asks for status, updates, or what's new in a channel."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "channel": {"type": "string", "description": "Channel name (with or without #) or channel ID"},
-                "limit": {"type": "integer", "description": "Number of messages (1-50, default 10)"},
+                "limit": {"type": "integer", "description": "Number of messages (1-50, default 15)"},
             },
             "required": ["channel"],
         },
@@ -358,8 +365,9 @@ JIRA_TOOL_DEFINITIONS = [
     {
         "name": "jira_create_issue",
         "description": (
-            "Create a new Jira issue. Show the draft (project, type, summary, description) "
-            "and confirm with the user before calling unless they asked to create immediately."
+            "Create a new Jira issue. Show the draft (project, type, summary, description, "
+            "priority, due date, estimate) and confirm before calling unless the user asked to "
+            "create immediately. Resolve relative due dates (Friday, in 2 days) from the system clock."
         ),
         "parameters": {
             "type": "object",
@@ -369,6 +377,14 @@ JIRA_TOOL_DEFINITIONS = [
                 "issue_type": {"type": "string", "description": "Task, Bug, Story, etc."},
                 "description": {"type": "string"},
                 "priority": {"type": "string", "description": "Optional priority name"},
+                "due_date": {
+                    "type": "string",
+                    "description": "Due date as YYYY-MM-DD (resolve relative phrases yourself)",
+                },
+                "original_estimate": {
+                    "type": "string",
+                    "description": "Time estimate in Jira format, e.g. 2h, 1d, 30m",
+                },
             },
             "required": ["project_key", "summary", "issue_type"],
         },
@@ -376,7 +392,7 @@ JIRA_TOOL_DEFINITIONS = [
     {
         "name": "jira_update_issue",
         "description": (
-            "Update an existing Jira issue (summary, description, or priority). "
+            "Update an existing Jira issue (summary, description, priority, due date, or estimate). "
             "Confirm changes with the user before calling unless they asked to update immediately."
         ),
         "parameters": {
@@ -386,6 +402,14 @@ JIRA_TOOL_DEFINITIONS = [
                 "summary": {"type": "string"},
                 "description": {"type": "string"},
                 "priority": {"type": "string"},
+                "due_date": {
+                    "type": "string",
+                    "description": "Due date as YYYY-MM-DD",
+                },
+                "original_estimate": {
+                    "type": "string",
+                    "description": "Time estimate in Jira format, e.g. 2h, 1d, 30m",
+                },
             },
             "required": ["issue_key"],
         },
@@ -412,10 +436,25 @@ SLACK_TOOL_NAMES = {t["name"] for t in SLACK_TOOL_DEFINITIONS}
 JIRA_TOOL_NAMES = {t["name"] for t in JIRA_TOOL_DEFINITIONS}
 
 
+def _clock_context() -> str:
+    now = datetime.now(timezone.utc)
+    return (
+        f"Current date/time (UTC): {now.strftime('%Y-%m-%dT%H:%M:%SZ')}. "
+        f"Today's calendar date: {now.strftime('%Y-%m-%d')} ({now.strftime('%A')}). "
+        "Resolve relative dates yourself (today, tomorrow, this week, next Monday, Friday, in 2 days) "
+        "from this clock. Never ask the user for a calendar date when they already used relative "
+        "language. When you state a plan, always show the resolved absolute date "
+        "(e.g. 'tomorrow → 2026-07-13 (Monday)')."
+    )
+
+
 def _system_prompt(has_gmail: bool, has_calendar: bool, has_slack: bool, has_jira: bool) -> str:
     parts = [
         "You are LetsConnect, a helpful AI assistant connected to the user's work tools.",
+        "Be proactive and smart: call tools when you already have enough to act; only ask for "
+        "details that are truly missing.",
         "Keep replies concise and readable (short paragraphs, bullet lists when helpful).",
+        _clock_context(),
         "DRAFTING: When the user asks you to write, draft, compose, or reply to a message or email, "
         "FIRST produce the full draft as text and show it to them — do NOT send yet. "
         "Render it clearly (for email, include a 'Subject:' line and the body; for chat, the message text). "
@@ -442,21 +481,34 @@ def _system_prompt(has_gmail: bool, has_calendar: bool, has_slack: bool, has_jir
     if has_calendar:
         parts.append(
             "Google Calendar tools: schedule and manage meetings on the user's primary calendar. "
-            "Use calendar_list_events to see what's coming up or check for conflicts before booking. "
-            "For scheduling, show the proposed title, date/time, attendees, and whether a Meet link "
-            "will be added — then ask for confirmation before calling calendar_create_event "
-            "(unless the user asked to schedule in one step). "
-            "Use ISO 8601 datetimes with the user's timezone when possible; call calendar_list_events "
-            "first if you need their calendar timezone from the response. "
+            "DATE RESOLUTION: For 'today', 'tomorrow', 'this week', or similar, compute YYYY-MM-DD "
+            "from the system clock and call calendar_list_events immediately (prefer on_date for a "
+            "single day, or time_min/time_max for a range). Do NOT ask which date they mean. "
+            "SCHEDULING FLOW: When the user wants to book a meeting and gives a relative day "
+            "(e.g. 'schedule a meeting tomorrow'): "
+            "(1) Resolve the absolute date and say it clearly in your reply. "
+            "(2) Ask only for missing essentials — agenda/title, start time (or propose one), "
+            "teammates to invite (emails or names), and whether to add Google Meet. "
+            "(3) If time is missing, propose a sensible default (e.g. 30 minutes mid-morning or "
+            "early afternoon in their calendar timezone) and confirm once. "
+            "(4) Show the full proposal (title, resolved date/time, attendees, Meet yes/no), then "
+            "ask for confirmation before calendar_create_event — unless they asked to book in one step. "
+            "Use ISO 8601 datetimes; use the timezone from calendar_list_events when available. "
+            "Check conflicts with calendar_list_events before booking when helpful. "
             "When the user wants a video call, set add_google_meet=true. "
-            "Include the html_link and meet_link in your reply after creating an event. "
-            "For calendar_update_event, confirm changes first unless the user asked to update immediately. "
+            "After creating, include the resolved date/time, html_link, and meet_link. "
+            "For calendar_update_event, confirm changes first unless they asked to update immediately. "
             "For calendar_delete_event, ALWAYS get explicit confirmation — deletion is permanent."
         )
     if has_slack:
         parts.append(
             "Slack rules: DMs and channel posts are sent AS THE LOGGED-IN USER (their own Slack account), "
             "not as a bot. A DM to Rohit appears in the user's normal 1:1 DM with Rohit. "
+            "STATUS / UPDATES: When the user asks what's new, any updates, status in a channel, or "
+            "recent messages — if a channel is named, call slack_read_channel immediately and "
+            "summarize (who said what, key points). If no channel is named, call slack_list_channels "
+            "and ask which one, or read an obvious match if the name is clear from context. "
+            "Prefer a short human summary over dumping raw message lists. "
             "ALWAYS call slack_send_dm before claiming a message was sent. "
             "Use slack_get_workspace, slack_list_users, slack_read_channel, slack_send_channel_message. "
             "Show the drafted message text for approval before sending (unless the user asked to send in one step). "
@@ -472,10 +524,16 @@ def _system_prompt(has_gmail: bool, has_calendar: bool, has_slack: bool, has_jir
             "Use jira_get_me if you need the user's Jira display name. "
             "Use jira_get_issue for a single ticket by key. Use jira_list_projects when the user "
             "doesn't know project keys. "
-            "For create/update, show the draft fields and ask for confirmation before calling "
-            "jira_create_issue or jira_update_issue (unless the user asked to do it in one step). "
+            "CREATE FLOW: When creating a ticket, gather what's useful — project, type, summary, "
+            "description, priority, due date / timeline, and estimate. Resolve relative due dates "
+            "(Friday, next week, in 2 days) from the system clock and state the YYYY-MM-DD. "
+            "Pass due_date and original_estimate (e.g. 2h, 1d) when the user gives them. "
+            "If project or type is missing, ask or list projects first. "
+            "Show the draft fields and ask for confirmation before jira_create_issue or "
+            "jira_update_issue (unless the user asked to do it in one step). "
             "For jira_delete_issue, ALWAYS get explicit confirmation — deletion is permanent. "
-            "Include browse_url links when sharing issue keys. Mention assignee when listing tickets."
+            "Include browse_url links when sharing issue keys. Mention assignee, due date, and "
+            "estimate when listing or confirming tickets."
         )
     if not has_jira:
         parts.append("More integrations (Teams) coming later.")
@@ -561,7 +619,7 @@ def _run_tool(
         if name == "slack_get_workspace":
             return slack.get_workspace()
         if name == "slack_read_channel":
-            return slack.read_channel(args["channel"], limit=args.get("limit", 10))
+            return slack.read_channel(args["channel"], limit=args.get("limit", 15))
         if name == "slack_send_dm":
             return slack.send_dm(args["user"], args["text"])
         if name == "slack_send_channel_message":
@@ -594,6 +652,8 @@ def _run_tool(
                 args["issue_type"],
                 description=args.get("description"),
                 priority=args.get("priority"),
+                due_date=args.get("due_date"),
+                original_estimate=args.get("original_estimate"),
             )
         if name == "jira_update_issue":
             return jira.update_issue(
@@ -601,6 +661,8 @@ def _run_tool(
                 summary=args.get("summary"),
                 description=args.get("description"),
                 priority=args.get("priority"),
+                due_date=args.get("due_date"),
+                original_estimate=args.get("original_estimate"),
             )
         if name == "jira_delete_issue":
             return jira.delete_issue(args["issue_key"])

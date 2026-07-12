@@ -54,6 +54,8 @@ def _summarize_issue(issue: dict[str, Any], *, site_url: str = "") -> dict[str, 
         "assignee_account_id": assignee.get("accountId") if assignee else None,
         "project_key": project.get("key"),
         "project_name": project.get("name"),
+        "due_date": fields.get("duedate"),
+        "original_estimate": (fields.get("timetracking") or {}).get("originalEstimate"),
         "url": issue.get("self"),
         "browse_url": f"{site_url.rstrip('/')}/browse/{issue_key}" if site_url and issue_key else None,
         "created": fields.get("created"),
@@ -160,6 +162,8 @@ class JiraTools:
                     "assignee",
                     "project",
                     "description",
+                    "duedate",
+                    "timetracking",
                     "created",
                     "updated",
                 ],
@@ -199,7 +203,12 @@ class JiraTools:
         data = self._request(
             "GET",
             f"/issue/{issue_key}",
-            params={"fields": "summary,description,status,issuetype,priority,assignee,project,created,updated"},
+            params={
+                "fields": (
+                    "summary,description,status,issuetype,priority,assignee,project,"
+                    "duedate,timetracking,created,updated"
+                ),
+            },
         )
         summary = _summarize_issue(data, site_url=self._site_url)
         summary["browse_url"] = f"{self._site_url}/browse/{issue_key}"
@@ -213,6 +222,8 @@ class JiraTools:
         *,
         description: str | None = None,
         priority: str | None = None,
+        due_date: str | None = None,
+        original_estimate: str | None = None,
     ) -> dict[str, Any]:
         fields: dict[str, Any] = {
             "project": {"key": project_key},
@@ -223,6 +234,10 @@ class JiraTools:
             fields["description"] = _text_to_adf(description)
         if priority:
             fields["priority"] = {"name": priority}
+        if due_date:
+            fields["duedate"] = due_date[:10]
+        if original_estimate:
+            fields["timetracking"] = {"originalEstimate": original_estimate}
 
         data = self._request("POST", "/issue", json_body={"fields": fields})
         issue_key = data.get("key")
@@ -230,6 +245,8 @@ class JiraTools:
             "key": issue_key,
             "id": data.get("id"),
             "browse_url": f"{self._site_url}/browse/{issue_key}" if issue_key else None,
+            "due_date": due_date[:10] if due_date else None,
+            "original_estimate": original_estimate,
             "message": f"Created issue {issue_key}" if issue_key else "Issue created",
         }
 
@@ -240,6 +257,8 @@ class JiraTools:
         summary: str | None = None,
         description: str | None = None,
         priority: str | None = None,
+        due_date: str | None = None,
+        original_estimate: str | None = None,
     ) -> dict[str, Any]:
         fields: dict[str, Any] = {}
         if summary is not None:
@@ -248,9 +267,16 @@ class JiraTools:
             fields["description"] = _text_to_adf(description)
         if priority is not None:
             fields["priority"] = {"name": priority}
+        if due_date is not None:
+            fields["duedate"] = due_date[:10]
+        if original_estimate is not None:
+            fields["timetracking"] = {"originalEstimate": original_estimate}
 
         if not fields:
-            raise ValueError("Provide at least one field to update (summary, description, or priority)")
+            raise ValueError(
+                "Provide at least one field to update "
+                "(summary, description, priority, due_date, or original_estimate)"
+            )
 
         self._request("PUT", f"/issue/{issue_key}", json_body={"fields": fields})
         return {
