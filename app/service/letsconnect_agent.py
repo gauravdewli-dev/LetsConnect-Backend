@@ -130,6 +130,13 @@ CALENDAR_TOOL_DEFINITIONS = [
                         "Calendar day YYYY-MM-DD. Use for 'meetings today/tomorrow' or any single day."
                     ),
                 },
+                "timezone": {
+                    "type": "string",
+                    "description": (
+                        "IANA timezone for on_date day bounds (optional). "
+                        "Omit to use the user's primary calendar timezone."
+                    ),
+                },
                 "query": {
                     "type": "string",
                     "description": "Free-text search (title, attendees, etc.)",
@@ -579,6 +586,7 @@ def _run_tool(
                 on_date=args.get("on_date"),
                 max_results=args.get("max_results", 10),
                 query=args.get("query"),
+                timezone_name=args.get("timezone"),
             )
         if name == "calendar_get_event":
             return calendar.get_event(args["event_id"])
