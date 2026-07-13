@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_auth import router as auth_router
 from app.api.routes_connect import router as connect_router
+from app.api.routes_health import router as health_router
 from app.api.routes_slack import router as slack_router
 from app.config import get_settings
 from app.middleware.access_log import configure_sanitized_access_logs
@@ -42,6 +43,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
+app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(connect_router)
 app.include_router(slack_router)

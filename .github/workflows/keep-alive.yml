@@ -1,0 +1,24 @@
+# Pings /health every 13 minutes so Render free tier does not spin down from idle.
+name: Keep Render awake
+
+on:
+  schedule:
+    - cron: "*/13 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping-health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit health endpoint
+        env:
+          # Optional repo variable; defaults to production Render URL.
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+        run: |
+          set -euo pipefail
+          base="${BACKEND_URL:-https://letsconnect-backend-qm8e.onrender.com}"
+          url="${base%/}/health"
+          echo "GET $url"
+          curl -fsS --max-time 90 --retry 2 --retry-delay 5 "$url"
+          echo
+          echo "OK"
