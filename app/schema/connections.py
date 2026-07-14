@@ -59,3 +59,21 @@ class JiraConnection(Base):
     created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     user = relationship("User", backref="jira_connection")
+
+
+class GithubConnection(Base):
+    __tablename__ = "github_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    github_user_id = Column(String, nullable=False)
+    github_login = Column(String, nullable=False)
+    github_display_name = Column(String, nullable=True)
+    github_avatar_url = Column(String, nullable=True)
+    access_token_enc = Column(String, nullable=False)
+    refresh_token_enc = Column(String, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    granted_scopes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+    user = relationship("User", backref="github_connection")

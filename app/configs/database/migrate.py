@@ -11,6 +11,7 @@ _DEPENDENT_TABLES = (
     "gmail_connections",
     "slack_connections",
     "jira_connections",
+    "github_connections",
     "auth_sessions",
     "password_reset_otps",
     "conversations",
@@ -99,6 +100,23 @@ def _ensure_jira_user_columns(state: _SchemaState) -> None:
                 conn.execute(text(f"ALTER TABLE jira_connections ADD COLUMN {column} {ddl}"))
 
 
+def _ensure_github_connection_columns(state: _SchemaState) -> None:
+    if "github_connections" not in state.table_names:
+        return
+    columns = state.columns("github_connections")
+    additions = {
+        "github_display_name": "VARCHAR NULL",
+        "github_avatar_url": "VARCHAR NULL",
+        "refresh_token_enc": "VARCHAR NULL",
+        "expires_at": "TIMESTAMP NULL",
+        "granted_scopes": "VARCHAR NULL",
+    }
+    with engine.begin() as conn:
+        for column, ddl in additions.items():
+            if column not in columns:
+                conn.execute(text(f"ALTER TABLE github_connections ADD COLUMN {column} {ddl}"))
+
+
 def _ensure_connection_identity_columns(state: _SchemaState) -> None:
     with engine.begin() as conn:
         if "gmail_connections" in state.table_names:
@@ -131,6 +149,7 @@ def ensure_schema() -> None:
         _ensure_email_verified_column(state)
         _ensure_otp_purpose_column(state)
         _ensure_jira_user_columns(state)
+        _ensure_github_connection_columns(state)
         _ensure_connection_identity_columns(state)
         return
 

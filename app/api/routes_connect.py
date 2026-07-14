@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.configs.database.db import get_db
 from app.service.integration_connect import (
     build_gmail_connect_url,
+    build_github_connect_url,
     build_jira_connect_url,
     build_slack_connect_url,
 )
@@ -43,6 +44,12 @@ from app.service.jira_tokens import (
     delete_jira_connection,
     get_jira_connection,
     sync_jira_user_profile,
+)
+from app.service.github_tokens import (
+    connect_github_from_code,
+    delete_github_connection,
+    get_github_connection,
+    sync_github_user_profile,
 )
 from app.types import (
     ChatHistoryResponse,
@@ -79,6 +86,7 @@ def _build_connection_status(db: Session, user_id: int) -> ConnectionStatusRespo
     gmail = get_gmail_connection(db, user_id)
     slack = get_slack_connection_by_user(db, user_id)
     jira = get_jira_connection(db, user_id)
+    github = get_github_connection(db, user_id)
 
     slack_open_url: str | None = None
     if slack and settings.slack_app_id:
@@ -105,6 +113,13 @@ def _build_connection_status(db: Session, user_id: int) -> ConnectionStatusRespo
         jira_display_name=jira.jira_display_name if jira else None,
         jira_configured=bool(settings.jira_client_id and settings.jira_client_secret),
         jira_oauth_callback_url=settings.jira_oauth_callback_uri if settings.jira_client_id else None,
+        github_connected=github is not None,
+        github_login=github.github_login if github else None,
+        github_display_name=github.github_display_name if github else None,
+        github_configured=bool(settings.github_client_id and settings.github_client_secret),
+        github_oauth_callback_url=(
+            settings.github_oauth_callback_uri if settings.github_client_id else None
+        ),
     )
 
 
@@ -116,10 +131,11 @@ def connection_status(user: User = Depends(get_current_user), db: Session = Depe
 
 @router.post("/api/connections/backfill-profiles", response_model=ConnectionStatusResponse)
 def backfill_connection_profiles(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Sync missing display names from Gmail/Slack/Jira, then return fresh status."""
+    """Sync missing display names from Gmail/Slack/Jira/GitHub, then return fresh status."""
     gmail = get_gmail_connection(db, user.id)
     slack = get_slack_connection_by_user(db, user.id)
     jira = get_jira_connection(db, user.id)
+    github = get_github_connection(db, user.id)
 
     if gmail and not gmail.gmail_display_name:
         sync_gmail_display_name(db, gmail)
@@ -129,6 +145,8 @@ def backfill_connection_profiles(user: User = Depends(get_current_user), db: Ses
         sync_slack_profile(db, slack)
     if jira and not jira.jira_display_name:
         sync_jira_user_profile(db, jira)
+    if github and not github.github_display_name:
+        sync_github_user_profile(db, github)
 
     return _build_connection_status(db, user.id)
 
@@ -157,6 +175,13 @@ def disconnect_jira(user: User = Depends(get_current_user), db: Session = Depend
     if not delete_jira_connection(db, user.id):
         raise HTTPException(status_code=404, detail="Jira not connected")
     return MessageResponse(message="Jira disconnected")
+
+
+@router.delete("/api/github", response_model=MessageResponse)
+def disconnect_github(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not delete_github_connection(db, user.id):
+        raise HTTPException(status_code=404, detail="GitHub not connected")
+    return MessageResponse(message="GitHub disconnected")
 
 
 @router.get("/api/chat/messages", response_model=ChatHistoryResponse)
@@ -232,6 +257,15 @@ def slack_connect_url(user: User = Depends(get_current_user)):
 def jira_connect_url(user: User = Depends(get_current_user)):
     try:
         url = build_jira_connect_url(user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ConnectUrlResponse(url=url)
+
+
+@router.get("/api/integrations/github/connect-url", response_model=ConnectUrlResponse)
+def github_connect_url(user: User = Depends(get_current_user)):
+    try:
+        url = build_github_connect_url(user.id)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return ConnectUrlResponse(url=url)
@@ -401,4 +435,48 @@ async def jira_oauth_callback(
         logger.exception("Jira OAuth callback failed")
         return RedirectResponse(
             f"{settings.frontend_url}/success?provider=jira&error={quote('Jira connection failed')}"
+        )
+
+
+@router.get("/github/connect")
+def github_connect(token: str = Query(...), db: Session = Depends(get_db)):
+    user = get_user_from_query_token(token, db)
+    settings = get_settings()
+    if not settings.github_client_id:
+        raise HTTPException(status_code=503, detail="GitHub not configured")
+    try:
+        url = build_github_connect_url(user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return RedirectResponse(url)
+
+
+@router.get("/github/oauth/callback")
+async def github_oauth_callback(
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    settings = get_settings()
+    if error:
+        return RedirectResponse(
+            f"{settings.frontend_url}/success?provider=github&error={quote(error)}"
+        )
+    if not code or not state:
+        return RedirectResponse(
+            f"{settings.frontend_url}/success?provider=github&error=missing_params"
+        )
+
+    try:
+        payload = decode_token(state)
+        if payload.get("type") != "oauth_state" or payload.get("provider") != "github":
+            raise ValueError("Invalid state")
+        user_id = int(payload["sub"])
+        await connect_github_from_code(db, user_id, code)
+        return RedirectResponse(f"{settings.frontend_url}/success?provider=github&connected=1")
+    except Exception:
+        logger.exception("GitHub OAuth callback failed")
+        return RedirectResponse(
+            f"{settings.frontend_url}/success?provider=github&error={quote('GitHub connection failed')}"
         )

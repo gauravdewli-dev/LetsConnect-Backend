@@ -121,6 +121,11 @@ class ConnectionStatusResponse(BaseModel):
     jira_display_name: str | None = None
     jira_configured: bool = False
     jira_oauth_callback_url: str | None = None
+    github_connected: bool = False
+    github_login: str | None = None
+    github_display_name: str | None = None
+    github_configured: bool = False
+    github_oauth_callback_url: str | None = None
 
 
 class ChatMessage(BaseModel):

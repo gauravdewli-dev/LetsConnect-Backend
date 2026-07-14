@@ -19,6 +19,8 @@ from app.service.gmail_tokens import (
 )
 from app.service.jira_tokens import get_jira_connection, get_jira_tools_for_user
 from app.service.jira_tools import JiraTools
+from app.service.github_tokens import get_github_connection, get_github_tools_for_user
+from app.service.github_tools import GithubTools
 from app.service.slack_tools import SlackTools
 from app.service.calendar import CalendarClient
 from app.service.gmail import GmailClient
@@ -435,12 +437,145 @@ JIRA_TOOL_DEFINITIONS = [
     },
 ]
 
+GITHUB_TOOL_DEFINITIONS = [
+    {
+        "name": "github_get_me",
+        "description": "Get the connected GitHub user (login, name, profile URL).",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "github_list_repos",
+        "description": (
+            "List GitHub repositories the user can access (including private). "
+            "Optionally filter by name query or affiliation."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Optional name search filter"},
+                "affiliation": {
+                    "type": "string",
+                    "description": "Optional: owner, collaborator, organization_member (comma-separated)",
+                },
+                "max_results": {"type": "integer", "description": "Max repos (1-100, default 30)"},
+            },
+        },
+    },
+    {
+        "name": "github_list_pull_requests",
+        "description": "List pull requests for a repository (owner/repo).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "owner": {"type": "string"},
+                "repo": {"type": "string"},
+                "state": {
+                    "type": "string",
+                    "description": "open, closed, or all (default open)",
+                },
+                "max_results": {"type": "integer", "description": "Max PRs (1-50, default 20)"},
+            },
+            "required": ["owner", "repo"],
+        },
+    },
+    {
+        "name": "github_get_pull_request",
+        "description": "Get details for a single pull request including mergeable state.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "owner": {"type": "string"},
+                "repo": {"type": "string"},
+                "pull_number": {"type": "integer"},
+            },
+            "required": ["owner", "repo", "pull_number"],
+        },
+    },
+    {
+        "name": "github_create_pull_request",
+        "description": (
+            "Create a pull request. Show the draft (title, head, base, body) and confirm "
+            "before calling unless the user asked to create immediately."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "owner": {"type": "string"},
+                "repo": {"type": "string"},
+                "title": {"type": "string"},
+                "head": {"type": "string", "description": "Source branch (or user:branch for forks)"},
+                "base": {"type": "string", "description": "Target branch, e.g. main"},
+                "body": {"type": "string"},
+                "draft": {"type": "boolean"},
+            },
+            "required": ["owner", "repo", "title", "head", "base"],
+        },
+    },
+    {
+        "name": "github_merge_pull_request",
+        "description": (
+            "Merge a pull request. ALWAYS confirm with the user before calling — "
+            "merging cannot be undone easily."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "owner": {"type": "string"},
+                "repo": {"type": "string"},
+                "pull_number": {"type": "integer"},
+                "merge_method": {
+                    "type": "string",
+                    "description": "merge, squash, or rebase (default merge)",
+                },
+                "commit_title": {"type": "string"},
+                "commit_message": {"type": "string"},
+            },
+            "required": ["owner", "repo", "pull_number"],
+        },
+    },
+    {
+        "name": "github_list_workflow_runs",
+        "description": (
+            "List recent GitHub Actions workflow runs for a repository. "
+            "Use when the user asks about CI builds, Actions status, or failing pipelines."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "owner": {"type": "string"},
+                "repo": {"type": "string"},
+                "branch": {"type": "string"},
+                "status": {
+                    "type": "string",
+                    "description": "queued, in_progress, completed, etc.",
+                },
+                "max_results": {"type": "integer", "description": "Max runs (1-30, default 10)"},
+            },
+            "required": ["owner", "repo"],
+        },
+    },
+    {
+        "name": "github_get_workflow_run",
+        "description": "Get status and conclusion for a specific GitHub Actions workflow run.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "owner": {"type": "string"},
+                "repo": {"type": "string"},
+                "run_id": {"type": "integer"},
+            },
+            "required": ["owner", "repo", "run_id"],
+        },
+    },
+]
+
 MAX_TOOL_ROUNDS = 8
 
 GMAIL_TOOL_NAMES = {t["name"] for t in GMAIL_TOOL_DEFINITIONS}
 CALENDAR_TOOL_NAMES = {t["name"] for t in CALENDAR_TOOL_DEFINITIONS}
 SLACK_TOOL_NAMES = {t["name"] for t in SLACK_TOOL_DEFINITIONS}
 JIRA_TOOL_NAMES = {t["name"] for t in JIRA_TOOL_DEFINITIONS}
+GITHUB_TOOL_NAMES = {t["name"] for t in GITHUB_TOOL_DEFINITIONS}
 
 
 def _clock_context() -> str:
@@ -455,7 +590,13 @@ def _clock_context() -> str:
     )
 
 
-def _system_prompt(has_gmail: bool, has_calendar: bool, has_slack: bool, has_jira: bool) -> str:
+def _system_prompt(
+    has_gmail: bool,
+    has_calendar: bool,
+    has_slack: bool,
+    has_jira: bool,
+    has_github: bool,
+) -> str:
     connected = []
     if has_gmail:
         connected.append("Gmail")
@@ -465,31 +606,34 @@ def _system_prompt(has_gmail: bool, has_calendar: bool, has_slack: bool, has_jir
         connected.append("Slack")
     if has_jira:
         connected.append("Jira")
+    if has_github:
+        connected.append("GitHub")
     connected_label = ", ".join(connected) if connected else "none yet"
 
     parts = [
         "You are LetsConnect — a focused work assistant that helps the user with their connected "
-        "tools (email, calendar, Slack, Jira). You are not a general-purpose chatbot, tutor, "
+        "tools (email, calendar, Slack, Jira, GitHub). You are not a general-purpose chatbot, tutor, "
         "search engine, or entertainment bot.",
         f"Currently connected for this user: {connected_label}.",
         "SCOPE — IN SCOPE: reading/searching/drafting/sending email; listing or scheduling calendar "
-        "events; Slack DMs/channels; Jira tickets; short help on how to use LetsConnect or connect "
-        "an integration. "
+        "events; Slack DMs/channels; Jira tickets; GitHub repos/PRs/Actions; short help on how to use "
+        "LetsConnect or connect an integration. "
         "OUT OF SCOPE (politely decline): trivia, homework, coding help unrelated to these tools, "
         "medical/legal/financial advice, politics, creative writing for fun, roleplay, jokes/riddles "
-        "as the main ask, philosophy debates, or anything that does not need Gmail/Calendar/Slack/Jira. "
+        "as the main ask, philosophy debates, or anything that does not need "
+        "Gmail/Calendar/Slack/Jira/GitHub. "
         "If mixed (small chitchat + a real work ask), answer the work ask and lightly skip the rest.",
         "OFF-TOPIC REPLY STYLE: Be warm and brief — never rude or preachy. Acknowledge in one short "
         "line, explain you stay focused on their connected work apps, optionally give 1-2 example "
         "asks that match what they have connected, and invite them to try again. Do NOT call tools "
         "for out-of-scope requests. Do NOT invent work data. Do NOT lecture.",
-        "Example off-topic reply: \"I'm tailored for your work stack (email, calendar, Slack, Jira), "
-        "so I can't help with that. Try something like 'What's on my calendar today?' or "
+        "Example off-topic reply: \"I'm tailored for your work stack (email, calendar, Slack, Jira, "
+        "GitHub), so I can't help with that. Try something like 'What's on my calendar today?' or "
         "'Summarize unread email' — happy to help with those.\"",
         "TONE & UX: Friendly, clear, and confident. Prefer short paragraphs and bullets. "
         "Lead with the answer, then details. If something fails, say what went wrong and the next "
-        "step (e.g. reconnect on Connected accounts). Never invent emails, meetings, messages, or "
-        "tickets — use tools or say you don't have that data yet.",
+        "step (e.g. reconnect on Connected accounts). Never invent emails, meetings, messages, "
+        "tickets, or PRs — use tools or say you don't have that data yet.",
         "Be proactive: call tools when you already have enough; only ask for details that are "
         "truly missing. If no useful integrations are connected, briefly say so and point them to "
         "Connected accounts on the dashboard.",
@@ -574,6 +718,17 @@ def _system_prompt(has_gmail: bool, has_calendar: bool, has_slack: bool, has_jir
             "Include browse_url links when sharing issue keys. Mention assignee, due date, and "
             "estimate when listing or confirming tickets."
         )
+    if has_github:
+        parts.append(
+            "GitHub rules: Use github_list_repos when the repo is unclear. "
+            "For PRs, use github_list_pull_requests / github_get_pull_request. "
+            "CREATE PR FLOW: Gather owner, repo, title, head branch, base branch, and optional body; "
+            "show the draft and confirm before github_create_pull_request (unless they asked to "
+            "create in one step). "
+            "For github_merge_pull_request, ALWAYS get explicit confirmation — merging is destructive. "
+            "For CI / Actions / build status, use github_list_workflow_runs (and "
+            "github_get_workflow_run for details). Include html_url links when sharing PRs or runs."
+        )
     if not has_gmail:
         parts.append(
             "Gmail is not connected — if they ask about email, politely ask them to connect Gmail "
@@ -594,10 +749,15 @@ def _system_prompt(has_gmail: bool, has_calendar: bool, has_slack: bool, has_jir
             "Jira is not connected — if they ask about tickets, politely ask them to connect Jira "
             "from Connected accounts; do not invent issue data."
         )
-    if not has_gmail and not has_calendar and not has_slack and not has_jira:
+    if not has_github:
+        parts.append(
+            "GitHub is not connected — if they ask about repos, PRs, or Actions, politely ask them "
+            "to connect GitHub from Connected accounts; do not invent PR or build data."
+        )
+    if not has_gmail and not has_calendar and not has_slack and not has_jira and not has_github:
         parts.append(
             "No integrations are connected. Welcome them briefly, explain LetsConnect helps with "
-            "Gmail, Calendar, Slack, and Jira once linked, and point them to Connected accounts. "
+            "Gmail, Calendar, Slack, Jira, and GitHub once linked, and point them to Connected accounts. "
             "Politely decline unrelated questions the same way."
         )
     return " ".join(parts)
@@ -611,6 +771,7 @@ def _run_tool(
     calendar: CalendarClient | None,
     slack: SlackTools | None,
     jira: JiraTools | None,
+    github: GithubTools | None,
 ) -> Any:
     if name in GMAIL_TOOL_NAMES:
         if not gmail:
@@ -731,6 +892,56 @@ def _run_tool(
         if name == "jira_delete_issue":
             return jira.delete_issue(args["issue_key"])
 
+    if name in GITHUB_TOOL_NAMES:
+        if not github:
+            raise ValueError("GitHub not connected")
+        if name == "github_get_me":
+            return github.get_me()
+        if name == "github_list_repos":
+            return github.list_repos(
+                query=args.get("query"),
+                affiliation=args.get("affiliation"),
+                max_results=args.get("max_results", 30),
+            )
+        if name == "github_list_pull_requests":
+            return github.list_pull_requests(
+                args["owner"],
+                args["repo"],
+                state=args.get("state", "open"),
+                max_results=args.get("max_results", 20),
+            )
+        if name == "github_get_pull_request":
+            return github.get_pull_request(args["owner"], args["repo"], args["pull_number"])
+        if name == "github_create_pull_request":
+            return github.create_pull_request(
+                args["owner"],
+                args["repo"],
+                title=args["title"],
+                head=args["head"],
+                base=args["base"],
+                body=args.get("body"),
+                draft=args.get("draft", False),
+            )
+        if name == "github_merge_pull_request":
+            return github.merge_pull_request(
+                args["owner"],
+                args["repo"],
+                args["pull_number"],
+                merge_method=args.get("merge_method", "merge"),
+                commit_title=args.get("commit_title"),
+                commit_message=args.get("commit_message"),
+            )
+        if name == "github_list_workflow_runs":
+            return github.list_workflow_runs(
+                args["owner"],
+                args["repo"],
+                branch=args.get("branch"),
+                status=args.get("status"),
+                max_results=args.get("max_results", 10),
+            )
+        if name == "github_get_workflow_run":
+            return github.get_workflow_run(args["owner"], args["repo"], args["run_id"])
+
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -826,8 +1037,9 @@ def run_agent(
     gmail_conn = get_gmail_connection(db, user_id)
     slack_conn = get_slack_connection_by_user(db, user_id)
     jira_conn = get_jira_connection(db, user_id)
-    if not gmail_conn and not slack_conn and not jira_conn:
-        raise ValueError("Connect Gmail, Slack, or Jira in the dashboard first")
+    github_conn = get_github_connection(db, user_id)
+    if not gmail_conn and not slack_conn and not jira_conn and not github_conn:
+        raise ValueError("Connect Gmail, Slack, Jira, or GitHub in the dashboard first")
 
     google_creds = None
     gmail = None
@@ -851,6 +1063,7 @@ def run_agent(
         else None
     )
     jira = get_jira_tools_for_user(db, user_id) if jira_conn else None
+    github = get_github_tools_for_user(db, user_id) if github_conn else None
 
     tool_definitions: list[dict[str, Any]] = []
     if gmail:
@@ -861,8 +1074,12 @@ def run_agent(
         tool_definitions.extend(SLACK_TOOL_DEFINITIONS)
     if jira:
         tool_definitions.extend(JIRA_TOOL_DEFINITIONS)
+    if github:
+        tool_definitions.extend(GITHUB_TOOL_DEFINITIONS)
 
-    system_instruction = _system_prompt(bool(gmail), bool(calendar), bool(slack), bool(jira))
+    system_instruction = _system_prompt(
+        bool(gmail), bool(calendar), bool(slack), bool(jira), bool(github)
+    )
     if gmail_conn and google_creds and not has_calendar_access(gmail_conn, creds=google_creds):
         system_instruction += (
             " Google Calendar is NOT connected yet — if the user asks about meetings or scheduling, "
@@ -874,6 +1091,10 @@ def run_agent(
         system_instruction += (
             f" The connected Jira user is {jira_conn.jira_display_name!r} — "
             "'my tickets' means issues assigned to this user."
+        )
+    if github_conn and github_conn.github_login:
+        system_instruction += (
+            f" The connected GitHub user is {github_conn.github_login!r}."
         )
 
     gemini_pool = GeminiKeyPool(settings.gemini_api_keys)
@@ -930,7 +1151,15 @@ def run_agent(
                 args = dict(function_call.args) if function_call.args else {}
                 tools_used.append(name)
                 try:
-                    result = _run_tool(name, args, gmail=gmail, calendar=calendar, slack=slack, jira=jira)
+                    result = _run_tool(
+                        name,
+                        args,
+                        gmail=gmail,
+                        calendar=calendar,
+                        slack=slack,
+                        jira=jira,
+                        github=github,
+                    )
                 except Exception as exc:
                     result = {"error": str(exc)}
 

@@ -1,6 +1,6 @@
 # LetsConnect — Backend
 
-FastAPI service for authentication, OAuth integrations (Gmail, Google Calendar, Slack, Jira), Gemini agent tools, and persistent chat (PostgreSQL + MongoDB).
+FastAPI service for authentication, OAuth integrations (Gmail, Google Calendar, Slack, Jira, GitHub), Gemini agent tools, and persistent chat (PostgreSQL + MongoDB).
 
 ## Requirements
 
@@ -9,7 +9,7 @@ FastAPI service for authentication, OAuth integrations (Gmail, Google Calendar, 
 - **PostgreSQL** (e.g. Neon)
 - **MongoDB Atlas** (free M0 tier is fine for development)
 - Google Cloud OAuth credentials (`credentials.json`) for Gmail
-- Optional: Slack app, Jira OAuth app, Gemini API key, email provider (Brevo/SMTP)
+- Optional: Slack app, Jira OAuth app, GitHub OAuth app, Gemini API key, email provider (Brevo/SMTP)
 
 ## Setup
 
@@ -54,6 +54,7 @@ print(c.admin.command('ping'))
 | `SLACK_CLIENT_ID` / `SECRET` / `SIGNING_SECRET` | For Slack | From [api.slack.com/apps](https://api.slack.com/apps) |
 | `SLACK_APP_ID` | No | For “Open in Slack” links in status API |
 | `JIRA_CLIENT_ID` / `JIRA_CLIENT_SECRET` | For Jira | Atlassian developer console |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | For GitHub | GitHub OAuth App (settings/developers) |
 | `EMAIL_PROVIDER`, `BREVO_API_KEY`, etc. | For signup OTP | See `.env.example` |
 
 \*Required for chat/agent features that use Gmail or Gemini.
@@ -91,7 +92,7 @@ app/
 ### PostgreSQL
 
 - **users** — email, password, verification
-- **gmail_connections** / **slack_connections** / **jira_connections** — encrypted OAuth tokens
+- **gmail_connections** / **slack_connections** / **jira_connections** / **github_connections** — encrypted OAuth tokens
 - **conversations** — `conversation_id` (UUID), `user_id`, `is_primary`, optional `slack_channel_id`
 
 ### MongoDB
@@ -127,10 +128,11 @@ Authorization: Bearer <access_token>
 |--------|------|-------------|
 | GET | `/api/status` | Integration status (DB only, fast) |
 | POST | `/api/connections/backfill-profiles` | Sync missing display names |
-| GET | `/api/integrations/{gmail\|slack\|jira}/connect-url` | OAuth start URL (authenticated) |
+| GET | `/api/integrations/{gmail\|slack\|jira\|github}/connect-url` | OAuth start URL (authenticated) |
 | DELETE | `/api/gmail` | Disconnect Gmail |
 | DELETE | `/api/slack` | Disconnect Slack, uninstall app, **clear chat history** |
 | DELETE | `/api/jira` | Disconnect Jira |
+| DELETE | `/api/github` | Disconnect GitHub |
 | GET | `/api/chat/messages` | Paginated history (`limit`, `before` cursor) |
 | POST | `/api/chat` | Send message → agent reply (history from Mongo) |
 
@@ -141,6 +143,7 @@ Authorization: Bearer <access_token>
 | `/oauth/callback` | Gmail |
 | `/slack/oauth/callback` | Slack |
 | `/jira/oauth/callback` | Jira |
+| `/github/oauth/callback` | GitHub |
 
 Legacy token-in-query routes (`/gmail/connect?token=`, etc.) still work; the frontend prefers `/api/integrations/*/connect-url`.
 
@@ -156,7 +159,7 @@ Legacy token-in-query routes (`/gmail/connect?token=`, etc.) still work; the fro
 1. Client `POST /api/chat` with `{ message, conversation_id? }`.
 2. Server resolves primary `conversation_id` for user (Postgres).
 3. Loads last 20 messages from Mongo for agent context.
-4. Runs Gemini agent with Gmail/Slack/Jira tools.
+4. Runs Gemini agent with Gmail/Slack/Jira/GitHub tools.
 5. Saves user + assistant messages to Mongo.
 6. Returns `{ reply, tools_used, conversation_id }`.
 
@@ -185,6 +188,12 @@ Slack DMs use the same `handle_chat_message(..., channel="slack")` path.
 1. [Atlassian Developer Console](https://developer.atlassian.com/console/myapps) → OAuth 2.0 app.
 2. Callback: `{BACKEND_URL}/jira/oauth/callback`
 3. Scopes: `read:jira-work`, `write:jira-work`, `read:jira-user`, `offline_access`.
+
+### GitHub
+
+1. [GitHub OAuth Apps](https://github.com/settings/developers) → New OAuth App.
+2. Callback: `{BACKEND_URL}/github/oauth/callback`
+3. Scopes: `repo`, `read:user`, `workflow`. Prefer enabling user-token expiration for refresh tokens.
 
 ## Security
 

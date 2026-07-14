@@ -42,6 +42,11 @@ class Settings:
         self.jira_client_secret = os.getenv("JIRA_CLIENT_SECRET", "").strip()
         # Optional override if BACKEND_URL differs from the URL registered in Atlassian
         self.jira_oauth_callback_uri_override = os.getenv("JIRA_OAUTH_CALLBACK_URI", "").strip().rstrip("/")
+        self.github_client_id = os.getenv("GITHUB_CLIENT_ID", "").strip()
+        self.github_client_secret = os.getenv("GITHUB_CLIENT_SECRET", "").strip()
+        self.github_oauth_callback_uri_override = os.getenv(
+            "GITHUB_OAUTH_CALLBACK_URI", ""
+        ).strip().rstrip("/")
 
         self.app_name = os.getenv("APP_NAME", "LetsConnect")
         # Email: brevo (recommended free tier) | smtp | resend | auto
@@ -96,3 +101,9 @@ class Settings:
         if self.jira_oauth_callback_uri_override:
             return self.jira_oauth_callback_uri_override
         return f"{self.backend_url}/jira/oauth/callback"
+
+    @property
+    def github_oauth_callback_uri(self) -> str:
+        if self.github_oauth_callback_uri_override:
+            return self.github_oauth_callback_uri_override
+        return f"{self.backend_url}/github/oauth/callback"

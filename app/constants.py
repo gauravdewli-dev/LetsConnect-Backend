@@ -15,6 +15,7 @@ SLACK_SIGNATURE_MAX_AGE_SECONDS = 300
 GMAIL_OAUTH_CALLBACK_PATH = "/oauth/callback"
 SLACK_OAUTH_CALLBACK_PATH = "/slack/oauth/callback"
 JIRA_OAUTH_CALLBACK_PATH = "/jira/oauth/callback"
+GITHUB_OAUTH_CALLBACK_PATH = "/github/oauth/callback"
 
 JIRA_SCOPES = (
     "read:jira-work "
@@ -22,6 +23,9 @@ JIRA_SCOPES = (
     "read:jira-user "
     "offline_access"
 )
+
+# Space-separated for GitHub authorize URL (scope query param).
+GITHUB_SCOPES = "repo read:user workflow"
 
 SLACK_BOT_SCOPES = (
     "chat:write,"
