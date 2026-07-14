@@ -446,24 +446,92 @@ GITHUB_TOOL_DEFINITIONS = [
     {
         "name": "github_list_repos",
         "description": (
-            "List GitHub repositories the user can access (including private). "
-            "Optionally filter by name query or affiliation."
+            "List ALL repositories the connected user can access — owned, collaborator, AND "
+            "organization member repos, including PRIVATE ones where they are not the owner. "
+            "Use this (with no query) when they say 'all my repos', 'repos assigned to me', "
+            "'repos I have access to'. Each result includes access role (owner/collaborator/etc). "
+            "Do NOT use a name query unless they asked to search by name."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Optional name search filter"},
+                "query": {
+                    "type": "string",
+                    "description": "Optional name search only — omit to list all accessible repos",
+                },
                 "affiliation": {
                     "type": "string",
-                    "description": "Optional: owner, collaborator, organization_member (comma-separated)",
+                    "description": (
+                        "Optional filter: owner, collaborator, organization_member "
+                        "(comma-separated). Default = all three."
+                    ),
                 },
-                "max_results": {"type": "integer", "description": "Max repos (1-100, default 30)"},
+                "max_results": {
+                    "type": "integer",
+                    "description": "Max repos (1-200, default 100)",
+                },
+            },
+        },
+    },
+    {
+        "name": "github_list_branches",
+        "description": (
+            "List branch names in a repository. Use when creating or filtering PRs and the user "
+            "gave a partial branch name, or when head/base are unknown. Do NOT assume main/dev — "
+            "use the exact branch names the user provides (or list first)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "owner": {"type": "string"},
+                "repo": {"type": "string"},
+                "query": {
+                    "type": "string",
+                    "description": "Optional substring to filter branch names (e.g. feature, release)",
+                },
+                "max_results": {"type": "integer", "description": "Max branches (1-100, default 30)"},
+            },
+            "required": ["owner", "repo"],
+        },
+    },
+    {
+        "name": "github_search_my_pull_requests",
+        "description": (
+            "Search PRs involving the CONNECTED GitHub user across all accessible repos. "
+            "PREFER this when they ask about 'my PRs', 'PRs I raised/opened/created', "
+            "'PRs waiting for my review', 'PRs assigned to me', or 'PRs for me' without naming a repo. "
+            "role=authored → PRs they opened; role=review_requested → PRs asking them to review; "
+            "role=assigned → PRs assigned to them; role=involves → broader involvement."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "description": "authored | review_requested | assigned | involves (default authored)",
+                },
+                "state": {
+                    "type": "string",
+                    "description": "open, closed, merged, or all (default open)",
+                },
+                "repo": {
+                    "type": "string",
+                    "description": "Optional owner/repo filter, e.g. acme/api",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Optional extra GitHub search terms (title keywords, label:bug, etc.)",
+                },
+                "max_results": {"type": "integer", "description": "Max PRs (1-50, default 20)"},
             },
         },
     },
     {
         "name": "github_list_pull_requests",
-        "description": "List pull requests for a repository (owner/repo).",
+        "description": (
+            "List pull requests for ONE repository (owner/repo). Use when the repo is known. "
+            "Optional head/base filters for branch-to-branch PRs (any branch names — never hardcode)."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -473,6 +541,14 @@ GITHUB_TOOL_DEFINITIONS = [
                     "type": "string",
                     "description": "open, closed, or all (default open)",
                 },
+                "head": {
+                    "type": "string",
+                    "description": "Source branch name filter (exact branch the user named)",
+                },
+                "base": {
+                    "type": "string",
+                    "description": "Target branch name filter (exact branch the user named)",
+                },
                 "max_results": {"type": "integer", "description": "Max PRs (1-50, default 20)"},
             },
             "required": ["owner", "repo"],
@@ -480,7 +556,11 @@ GITHUB_TOOL_DEFINITIONS = [
     },
     {
         "name": "github_get_pull_request",
-        "description": "Get details for a single pull request including mergeable state.",
+        "description": (
+            "Get full details for one PR: title, description/body, author, head→base branches, "
+            "labels, reviewers, mergeable state, html_url link, and recent review comments. "
+            "ALWAYS use this when the user asks to review, open, or summarize a specific PR."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -494,8 +574,11 @@ GITHUB_TOOL_DEFINITIONS = [
     {
         "name": "github_create_pull_request",
         "description": (
-            "Create a pull request. Show the draft (title, head, base, body) and confirm "
-            "before calling unless the user asked to create immediately."
+            "Create a pull request between ANY two branches the user names (head → base). "
+            "Never default to main/master/dev unless the user said so or the repo default_branch "
+            "is confirmed. Show draft (repo, title, head, base, body) and confirm before calling "
+            "unless they asked to create immediately. If a branch name is ambiguous, call "
+            "github_list_branches first."
         ),
         "parameters": {
             "type": "object",
@@ -503,9 +586,15 @@ GITHUB_TOOL_DEFINITIONS = [
                 "owner": {"type": "string"},
                 "repo": {"type": "string"},
                 "title": {"type": "string"},
-                "head": {"type": "string", "description": "Source branch (or user:branch for forks)"},
-                "base": {"type": "string", "description": "Target branch, e.g. main"},
-                "body": {"type": "string"},
+                "head": {
+                    "type": "string",
+                    "description": "Source branch exactly as named by the user (or user:branch for forks)",
+                },
+                "base": {
+                    "type": "string",
+                    "description": "Target branch exactly as named by the user",
+                },
+                "body": {"type": "string", "description": "PR description/markdown body"},
                 "draft": {"type": "boolean"},
             },
             "required": ["owner", "repo", "title", "head", "base"],
@@ -537,14 +626,18 @@ GITHUB_TOOL_DEFINITIONS = [
         "name": "github_list_workflow_runs",
         "description": (
             "List recent GitHub Actions workflow runs for a repository. "
-            "Use when the user asks about CI builds, Actions status, or failing pipelines."
+            "Use when the user asks about CI builds, Actions status, or failing pipelines. "
+            "Pass branch only when they named a specific branch."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "owner": {"type": "string"},
                 "repo": {"type": "string"},
-                "branch": {"type": "string"},
+                "branch": {
+                    "type": "string",
+                    "description": "Optional branch filter — use the exact branch name they gave",
+                },
                 "status": {
                     "type": "string",
                     "description": "queued, in_progress, completed, etc.",
@@ -720,14 +813,37 @@ def _system_prompt(
         )
     if has_github:
         parts.append(
-            "GitHub rules: Use github_list_repos when the repo is unclear. "
-            "For PRs, use github_list_pull_requests / github_get_pull_request. "
-            "CREATE PR FLOW: Gather owner, repo, title, head branch, base branch, and optional body; "
-            "show the draft and confirm before github_create_pull_request (unless they asked to "
-            "create in one step). "
-            "For github_merge_pull_request, ALWAYS get explicit confirmation — merging is destructive. "
-            "For CI / Actions / build status, use github_list_workflow_runs (and "
-            "github_get_workflow_run for details). Include html_url links when sharing PRs or runs."
+            "GitHub rules — be dynamic, never invent branch or PR data. "
+            "IDENTITY: The connected GitHub login is who 'I/me/my' refers to. "
+            "REPOS: For 'all my repos', 'repos assigned to me', or 'repos I have access to', "
+            "call github_list_repos with NO query (max_results high enough). Results include "
+            "private collaborator/org repos where they are NOT the owner — show access role "
+            "(owner/collaborator/admin/read), private flag, owner, and html_url for each. "
+            "Never claim they only own repos if collaborator entries are present. "
+            "MY PRs: If they ask about PRs they raised/opened/created → "
+            "github_search_my_pull_requests(role=authored). "
+            "If they ask about PRs for them to review / waiting on their review → "
+            "role=review_requested. If assigned to them → role=assigned. "
+            "If vague ('my PRs', 'PRs for me') and unclear, prefer authored first, or ask once "
+            "whether they mean opened-by-me vs review-requested. "
+            "REPO PRs: When owner/repo is known, use github_list_pull_requests "
+            "(optional head/base for branch→branch filters). "
+            "REVIEW / DETAILS: For a specific PR (number or URL), call github_get_pull_request and "
+            "ALWAYS reply with: title, description (summarize if long but keep key points), "
+            "author, head → base branches, state, and the exact html_url link. "
+            "When listing PRs, include title, #number, head→base, and html_url for each. "
+            "BRANCHES: Never hardcode main/master/dev/staging. Use exactly the branch names the "
+            "user gives. If missing or ambiguous, call github_list_branches (or use "
+            "default_branch from github_list_repos only as a confirmed fact). "
+            "CREATE PR FLOW: Need owner, repo, title, head (source), base (target), optional body. "
+            "Example asks: 'PR from feature/login to release/2.1', 'raise PR feature-x into develop'. "
+            "Show the draft fields and confirm before github_create_pull_request unless they asked "
+            "to create in one step. After create, return title + html_url. "
+            "MERGE: ALWAYS confirm before github_merge_pull_request. "
+            "ACTIONS: github_list_workflow_runs / github_get_workflow_run; pass branch only when named. "
+            "If repo is unclear, github_list_repos first. Always include clickable html_url links. "
+            "If collaborator/org private repos seem missing after listing, tell them to disconnect "
+            "and reconnect GitHub so repo + read:org scopes are granted."
         )
     if not has_gmail:
         parts.append(
@@ -901,13 +1017,30 @@ def _run_tool(
             return github.list_repos(
                 query=args.get("query"),
                 affiliation=args.get("affiliation"),
+                max_results=args.get("max_results", 100),
+            )
+        if name == "github_list_branches":
+            return github.list_branches(
+                args["owner"],
+                args["repo"],
+                query=args.get("query"),
                 max_results=args.get("max_results", 30),
+            )
+        if name == "github_search_my_pull_requests":
+            return github.search_my_pull_requests(
+                role=args.get("role", "authored"),
+                state=args.get("state", "open"),
+                repo=args.get("repo"),
+                query=args.get("query"),
+                max_results=args.get("max_results", 20),
             )
         if name == "github_list_pull_requests":
             return github.list_pull_requests(
                 args["owner"],
                 args["repo"],
                 state=args.get("state", "open"),
+                head=args.get("head"),
+                base=args.get("base"),
                 max_results=args.get("max_results", 20),
             )
         if name == "github_get_pull_request":
@@ -1094,7 +1227,9 @@ def run_agent(
         )
     if github_conn and github_conn.github_login:
         system_instruction += (
-            f" The connected GitHub user is {github_conn.github_login!r}."
+            f" The connected GitHub user is {github_conn.github_login!r} — "
+            "'my PRs' / 'PRs I raised' means author=that login; "
+            "'PRs for my review' means review-requested for that login."
         )
 
     gemini_pool = GeminiKeyPool(settings.gemini_api_keys)

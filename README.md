@@ -193,7 +193,7 @@ Slack DMs use the same `handle_chat_message(..., channel="slack")` path.
 
 1. [GitHub OAuth Apps](https://github.com/settings/developers) → New OAuth App.
 2. Callback: `{BACKEND_URL}/github/oauth/callback`
-3. Scopes: `repo`, `read:user`, `workflow`. Prefer enabling user-token expiration for refresh tokens.
+3. Scopes: `repo`, `read:user`, `read:org`, `workflow`. Prefer enabling user-token expiration for refresh tokens.
 
 ## Security
 

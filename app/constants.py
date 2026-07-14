@@ -25,7 +25,9 @@ JIRA_SCOPES = (
 )
 
 # Space-separated for GitHub authorize URL (scope query param).
-GITHUB_SCOPES = "repo read:user workflow"
+# repo = private + public repos user can access (owner/collaborator).
+# read:org = org membership / private org repos visibility.
+GITHUB_SCOPES = "repo read:user read:org workflow"
 
 SLACK_BOT_SCOPES = (
     "chat:write,"
