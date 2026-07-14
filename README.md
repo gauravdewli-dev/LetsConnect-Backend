@@ -48,7 +48,7 @@ print(c.admin.command('ping'))
 | `FRONTEND_URL` | No | Default `http://localhost:5173` — CORS + post-OAuth redirects |
 | `GEMINI_API_KEY` | Yes* | Primary Google AI Studio key for the agent |
 | `GEMINI_API_KEY_ONE` / `_TWO` / `_THREE` | No | Extra keys; agent auto-switches on 429 rate limits |
-| `GEMINI_MODEL` | No | Default `gemini-2.5-flash` |
+| `GEMINI_MODEL` | No | Default `gemini-3.5-flash` |
 | `SKIP_STARTUP_MIGRATIONS` | No | Set `true` in prod after schema is migrated to skip DB reflection on boot |
 | `GMAIL_CREDENTIALS_PATH` | Yes* | Path to Google OAuth `credentials.json` |
 | `SLACK_CLIENT_ID` / `SECRET` / `SIGNING_SECRET` | For Slack | From [api.slack.com/apps](https://api.slack.com/apps) |

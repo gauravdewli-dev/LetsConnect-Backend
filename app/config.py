@@ -26,7 +26,7 @@ class Settings:
         self.backend_url = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
         self.gemini_api_keys = self._collect_gemini_api_keys()
         self.gemini_api_key = self.gemini_api_keys[0] if self.gemini_api_keys else ""
-        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         self.skip_startup_migrations = os.getenv("SKIP_STARTUP_MIGRATIONS", "").strip().lower() in {
             "1",
             "true",
