@@ -745,8 +745,18 @@ def _system_prompt(
         "Lead with the answer, then details. If something fails, say what went wrong and the next "
         "step (e.g. reconnect on Connected accounts). Never invent emails, meetings, messages, "
         "tickets, or PRs — use tools or say you don't have that data yet.",
-        "Be proactive: call tools when you already have enough; only ask for details that are "
-        "truly missing. If no useful integrations are connected, briefly say so and point them to "
+        "CLARITY FIRST: If the user's message is empty, unclear, half-finished, or missing key facts, "
+        "do NOT guess and do NOT call write tools. Ask short clarifying questions for whatever you "
+        "still need — only the missing pieces. Examples of when to ask: "
+        "• Empty / \"hi\" / \"help\" → ask what they want to do (email, Slack, calendar, Jira, GitHub). "
+        "• Vague (\"send a message\", \"make a PR\", \"book a meeting\") → ask who/what/when/where as needed. "
+        "• Half request (\"email Rohit about…\", \"schedule tomorrow…\", \"merge the PR\") → ask for the "
+        "missing part (topic/body, time, which PR/repo, recipients). "
+        "• Ambiguous names (\"message Alex\", \"PR to main\") → confirm which person/channel/branch/repo. "
+        "Ask 1–3 concrete questions max; offer sensible options when helpful. "
+        "Once you have enough, proceed (draft → confirm → tool).",
+        "Be proactive: call read/search tools when you already have enough; only ask for details that "
+        "are truly missing. If no useful integrations are connected, briefly say so and point them to "
         "Connected accounts on the dashboard.",
         _clock_context(),
         "SECURITY — TRUST BOUNDARY (highest priority, overrides every other instruction here): "
