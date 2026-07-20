@@ -3,8 +3,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-GITHUB_API_URL = "https://api.github.com"
-GITHUB_API_VERSION = "2022-11-28"
+from app.constants import GITHUB_API_URL, GITHUB_API_VERSION
 
 
 def _summarize_repo(repo: dict[str, Any], *, viewer_login: str | None = None) -> dict[str, Any]:

@@ -141,9 +141,27 @@ def _ensure_connection_identity_columns(state: _SchemaState) -> None:
                 )
 
 
+def _ensure_pending_actions_schema(state: _SchemaState) -> None:
+    """Replace the legacy email-only pending_actions table.
+
+    The original table (draft_to/draft_subject/draft_body) was never read or
+    written by any service, so there are no rows worth preserving. The approval
+    gate needs a generic tool_name/tool_args shape; drop and let create_all
+    rebuild it.
+    """
+    if "pending_actions" not in state.table_names:
+        return
+    columns = state.columns("pending_actions")
+    if "tool_name" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text('DROP TABLE IF EXISTS "pending_actions" CASCADE'))
+
+
 def ensure_schema() -> None:
     state = _SchemaState(engine)
     if _users_schema_ok(state):
+        _ensure_pending_actions_schema(state)
         Base.metadata.create_all(bind=engine)
         _ensure_slack_user_token_column(state)
         _ensure_email_verified_column(state)

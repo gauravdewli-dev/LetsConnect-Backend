@@ -12,11 +12,12 @@ from google_auth_oauthlib.flow import Flow
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.constants import CALENDAR_SCOPES, GMAIL_SCOPES, GOOGLE_SCOPES
 from app.schema.connections import GmailConnection, SlackConnection
 from app.security import decrypt_token, encrypt_token
 from app.service.calendar import CalendarClient
-from app.service.calendar.constants import CALENDAR_SCOPES, scope_grants_calendar_access
-from app.service.gmail import GMAIL_SCOPES, GOOGLE_SCOPES, GmailClient
+from app.service.calendar.constants import scope_grants_calendar_access
+from app.service.gmail import GmailClient
 
 
 def _scopes_from_connection(conn: GmailConnection) -> list[str]:

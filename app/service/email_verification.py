@@ -1,9 +1,9 @@
 from sqlalchemy.orm import Session
 
+from app.constants import OTP_PURPOSE_EMAIL_VERIFY
 from app.security import hash_password
 from app.service.email_service import send_signup_verification_email
 from app.service.otp_service import (
-    OTP_PURPOSE_EMAIL_VERIFY,
     create_otp,
     delete_otp_record_on_send_failure,
     verify_otp,

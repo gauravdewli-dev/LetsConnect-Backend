@@ -3,12 +3,11 @@ import logging
 import httpx
 
 from app.config import get_settings
+from app.constants import SLACK_API
 from app.schema.connections import SlackConnection
 from app.service.gmail_tokens import get_slack_bot_token, get_slack_user_token
 
 logger = logging.getLogger(__name__)
-
-SLACK_API = "https://slack.com/api"
 
 
 def uninstall_slack_from_workspace(conn: SlackConnection) -> None:

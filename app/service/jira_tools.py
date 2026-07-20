@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-ATLASSIAN_API_URL = "https://api.atlassian.com"
+from app.constants import ATLASSIAN_API_URL
 
 
 def _text_to_adf(text: str) -> dict[str, Any]:

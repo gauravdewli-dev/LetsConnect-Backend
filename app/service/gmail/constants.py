@@ -1,8 +1,5 @@
-from app.service.calendar.constants import CALENDAR_SCOPES
+"""Re-exports Google scope constants from app.constants."""
 
-GMAIL_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-]
+from app.constants import CALENDAR_SCOPES, GMAIL_SCOPES, GOOGLE_SCOPES
 
-GOOGLE_SCOPES = GMAIL_SCOPES + CALENDAR_SCOPES
+__all__ = ["CALENDAR_SCOPES", "GMAIL_SCOPES", "GOOGLE_SCOPES"]

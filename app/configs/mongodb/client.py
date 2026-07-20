@@ -4,12 +4,9 @@ from pymongo.collection import Collection
 from pymongo.database import Database
 
 from app.config import get_settings
+from app.constants import MESSAGES_COLLECTION
 
 _client: MongoClient | None = None
-
-AGENT_HISTORY_LIMIT = 20
-UI_MESSAGE_PAGE_LIMIT = 50
-MESSAGES_COLLECTION = "messages"
 
 
 def get_mongo_client() -> MongoClient:
