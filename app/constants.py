@@ -23,11 +23,14 @@ SLACK_SIGNATURE_MAX_AGE_SECONDS = 300
 AGENT_HISTORY_LIMIT = 20
 UI_MESSAGE_PAGE_LIMIT = 10
 MESSAGES_COLLECTION = "messages"
-# Broad cross-integration asks ("catch me up") legitimately need more than 8
-# rounds — the model spends several just searching before it can answer. Safe to
-# raise: every side-effecting tool is behind the approval gate, so extra rounds
-# cannot produce extra writes.
-MAX_TOOL_ROUNDS = 14
+# Cap Gemini↔tool loops per message. Write tools stay behind the approval gate;
+# this limit mainly controls latency and runaway read loops. 8 is enough for
+# typical multi-step asks without multi-minute chats.
+MAX_TOOL_ROUNDS = 8
+# Gemini SDK default is 5 attempts with long backoff — keep this low so 503/429
+# fail fast instead of hanging the /api/chat request for a minute+.
+GEMINI_HTTP_RETRY_ATTEMPTS = 2
+GEMINI_HTTP_TIMEOUT_MS = 45_000
 
 # App
 APP_NAME = "LetsConnect"
