@@ -1,8 +1,4 @@
-# Full calendar scope covers events + calendar metadata (timezone).
-# calendar.events alone can list/create events but cannot call calendars.get.
-CALENDAR_SCOPES = [
-    "https://www.googleapis.com/auth/calendar",
-]
+from app.constants import CALENDAR_SCOPES
 
 
 def scope_grants_calendar_access(scopes: list[str]) -> bool:

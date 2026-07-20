@@ -6,13 +6,10 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.constants import GITHUB_SCOPES
+from app.constants import GITHUB_API_URL, GITHUB_AUTH_URL, GITHUB_SCOPES
 from app.schema.connections import GithubConnection
 from app.security import decrypt_token, encrypt_token
 from app.service.github_tools import GithubTools
-
-GITHUB_AUTH_URL = "https://github.com/login/oauth"
-GITHUB_API_URL = "https://api.github.com"
 
 
 def github_authorize_url(state: str) -> str:

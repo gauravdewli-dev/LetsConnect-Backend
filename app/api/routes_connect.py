@@ -21,7 +21,8 @@ from app.security import (
     get_current_user,
     get_user_from_query_token,
 )
-from app.service.chat_service import clear_user_chat_history, get_messages_page, get_or_create_primary_conversation, handle_chat_message
+from app.constants import UI_MESSAGE_PAGE_LIMIT
+from app.service.chat_service import clear_user_chat_history, get_messages_page, get_or_create_primary_conversation, handle_chat_message, record_action_outcome
 from app.service.slack_disconnect import uninstall_slack_from_workspace
 from app.service.slack_onboarding import onboard_slack_user
 from app.service.gmail_tokens import (
@@ -58,6 +59,8 @@ from app.types import (
     ConnectUrlResponse,
     ConnectionStatusResponse,
     MessageResponse,
+    PendingActionResolution,
+    PendingActionResult,
     StoredChatMessage,
 )
 
@@ -188,7 +191,7 @@ def disconnect_github(user: User = Depends(get_current_user), db: Session = Depe
 def chat_messages(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    limit: int = Query(default=50, ge=1, le=100),
+    limit: int = Query(default=UI_MESSAGE_PAGE_LIMIT, ge=1, le=100),
     before: str | None = Query(default=None),
 ):
     conv = get_or_create_primary_conversation(db, user.id)
@@ -236,7 +239,58 @@ def chat(
         reply=result["reply"],
         tools_used=result["tools_used"],
         conversation_id=result["conversation_id"],
+        pending_action=result.get("pending_action"),
     )
+
+
+@router.post("/api/chat/pending/{action_id}/approve", response_model=PendingActionResult)
+def approve_pending_action(
+    action_id: int,
+    payload: PendingActionResolution | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Execute a held write using its stored args.
+
+    Ownership, single-use, and TTL are enforced in get_claimable_action. The
+    model is not consulted — what the user approved is exactly what runs.
+    """
+    from app.service.letsconnect_agent import execute_approved_action
+
+    try:
+        outcome = execute_approved_action(db, user.id, action_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Approved action %s failed: %s", action_id, exc)
+        raise HTTPException(status_code=502, detail=f"Action failed: {exc}") from exc
+
+    reply = f"Done — I ran the approved action.\n\n{outcome['action']['summary']}"
+    conversation_id = payload.conversation_id if payload else None
+    if conversation_id:
+        record_action_outcome(db, user.id, conversation_id, reply)
+    return PendingActionResult(action=outcome["action"], reply=reply)
+
+
+@router.post("/api/chat/pending/{action_id}/reject", response_model=PendingActionResult)
+def reject_pending_action_route(
+    action_id: int,
+    payload: PendingActionResolution | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from app.service.letsconnect_agent import reject_pending_action
+
+    try:
+        outcome = reject_pending_action(db, user.id, action_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    reply = "Cancelled — I did not run that action."
+    conversation_id = payload.conversation_id if payload else None
+    if conversation_id:
+        record_action_outcome(db, user.id, conversation_id, reply)
+    return PendingActionResult(action=outcome["action"], reply=reply)
 
 
 @router.get("/api/integrations/gmail/connect-url", response_model=ConnectUrlResponse)

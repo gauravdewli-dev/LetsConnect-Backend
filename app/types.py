@@ -138,10 +138,32 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = Field(default=None, max_length=36)
 
 
+class PendingActionModel(BaseModel):
+    """A write the agent proposed and is holding for explicit human approval."""
+
+    id: int
+    tool: str
+    # Rendered server-side from the stored args — this is what the user approves against.
+    summary: str
+    status: str
+    created_at: str | None = None
+    expires_in_seconds: int
+
+
 class ChatResponse(BaseModel):
     reply: str
     tools_used: list[str] = Field(default_factory=list)
     conversation_id: str
+    pending_action: PendingActionModel | None = None
+
+
+class PendingActionResolution(BaseModel):
+    conversation_id: str | None = None
+
+
+class PendingActionResult(BaseModel):
+    action: PendingActionModel
+    reply: str
 
 
 class StoredChatMessage(BaseModel):

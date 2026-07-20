@@ -14,9 +14,6 @@ from app.constants import (
 )
 from app.schema.password_reset_otp import PasswordResetOtp
 
-OTP_PURPOSE_PASSWORD_RESET = "password_reset"
-OTP_PURPOSE_EMAIL_VERIFY = "email_verify"
-
 
 @dataclass
 class _OtpAttemptState:

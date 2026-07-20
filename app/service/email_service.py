@@ -4,24 +4,9 @@ import re
 import httpx
 
 from app.config import get_settings
+from app.constants import BREVO_API, EMAIL_INTRO_HTML, EMAIL_INTRO_TEXT, RESEND_API
 
 logger = logging.getLogger(__name__)
-
-RESEND_API = "https://api.resend.com/emails"
-BREVO_API = "https://api.brevo.com/v3/smtp/email"
-
-EMAIL_INTRO_HTML = (
-    "<p>Hi there!</p>"
-    "<p>My name is <strong>Gaurav Dewli</strong>. LetsConnect is a personal project I'm building. "
-    "This email is <em>not</em> from a registered company — it's sent from my personal account "
-    "for account verification only.</p>"
-)
-EMAIL_INTRO_TEXT = (
-    "Hi there!\n\n"
-    "My name is Gaurav Dewli. LetsConnect is a personal project I'm building. "
-    "This email is not from a registered company — it's sent from my personal account "
-    "for account verification only.\n"
-)
 
 
 def send_otp_email(*, to_email: str, otp: str) -> None:

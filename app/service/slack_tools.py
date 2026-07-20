@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-SLACK_API = "https://slack.com/api"
+from app.constants import SLACK_API
 
 
 class SlackTools:

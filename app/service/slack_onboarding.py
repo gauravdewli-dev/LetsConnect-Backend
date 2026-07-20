@@ -2,50 +2,9 @@ import logging
 
 import httpx
 
+from app.constants import SLACK_API, SLACK_HOME_BLOCKS, SLACK_WELCOME_DM
+
 logger = logging.getLogger(__name__)
-
-SLACK_API = "https://slack.com/api"
-APP_NAME = "LetsConnect"
-
-WELCOME_DM = (
-    f"Hi! I'm *{APP_NAME}*, your AI assistant.\n\n"
-    "Chat with me here anytime — the same assistant as *Text chat* on the web dashboard. "
-    "I can work with your connected Gmail and Slack.\n\n"
-    "*Try asking:*\n"
-    "• How many unread emails do I have?\n"
-    "• Send a DM to Rohit saying hello\n"
-    "• Read the latest messages from #general"
-)
-
-HOME_BLOCKS = [
-    {
-        "type": "header",
-        "text": {"type": "plain_text", "text": f"{APP_NAME} AI Assistant"},
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": (
-                f"Welcome to *{APP_NAME}* — your AI assistant for Gmail, Slack, and more.\n\n"
-                "Send me a direct message anytime. It's the same experience as "
-                "*Text chat* on the LetsConnect web dashboard."
-            ),
-        },
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": (
-                "*Examples:*\n"
-                "• How many unread emails do I have?\n"
-                "• Send a Slack DM to a teammate\n"
-                "• Read recent messages from a channel"
-            ),
-        },
-    },
-]
 
 
 def _post(bot_token: str, method: str, payload: dict) -> dict:
@@ -73,7 +32,7 @@ def send_welcome_dm(bot_token: str, slack_user_id: str) -> None:
     data = _post(
         bot_token,
         "chat.postMessage",
-        {"channel": channel_id, "text": WELCOME_DM},
+        {"channel": channel_id, "text": SLACK_WELCOME_DM},
     )
     if not data.get("ok"):
         logger.warning("welcome DM failed: %s", data.get("error"))
@@ -85,7 +44,7 @@ def publish_app_home(bot_token: str, slack_user_id: str) -> None:
         "views.publish",
         {
             "user_id": slack_user_id,
-            "view": {"type": "home", "blocks": HOME_BLOCKS},
+            "view": {"type": "home", "blocks": SLACK_HOME_BLOCKS},
         },
     )
     if not data.get("ok"):

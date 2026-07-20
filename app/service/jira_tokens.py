@@ -6,12 +6,10 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.constants import ATLASSIAN_API_URL, ATLASSIAN_AUTH_URL
 from app.schema.connections import JiraConnection
 from app.security import decrypt_token, encrypt_token
 from app.service.jira_tools import JiraTools
-
-ATLASSIAN_AUTH_URL = "https://auth.atlassian.com"
-ATLASSIAN_API_URL = "https://api.atlassian.com"
 
 
 def jira_authorize_url(state: str) -> str:
